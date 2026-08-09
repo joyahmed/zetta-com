@@ -4,6 +4,7 @@ import {
 	requestPermission,
 	sendNotification
 } from '@tauri-apps/plugin-notification';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useEffect, useRef, useState } from 'react';
 import { DEMO, DEMO_MESSAGES } from '../demo';
 
@@ -45,9 +46,24 @@ export const useMessages = (running: boolean) => {
 				// Only what arrived, and only when the window is not being
 				// looked at. This app lives in the tray; a notification for a
 				// message already on screen is noise.
-				if (allowed.current && document.hidden) {
-					for (const msg of m) {
-						if (msg.id > seen.current && !msg.mine) {
+				//
+				// The window is asked, not the document. `document.hidden` was
+				// the obvious test and it is wrong here: a window hidden to the
+				// tray still reports its document as visible in WebView2, and a
+				// window sitting behind another application never sets it at
+				// all — so the condition was almost never true and a
+				// notification almost never fired.
+				//
+				// Checked only when something has actually arrived, so this
+				// costs two IPC calls per message rather than two per poll.
+				const fresh = m.filter(x => x.id > seen.current && !x.mine);
+				if (allowed.current && fresh.length > 0) {
+					const w = getCurrentWindow();
+					const attended = await Promise.all([w.isVisible(), w.isFocused()])
+						.then(([visible, focused]) => visible && focused)
+						.catch(() => false);
+					if (!attended) {
+						for (const msg of fresh) {
 							sendNotification({
 								title: msg.from || 'Intercom',
 								body: msg.text
