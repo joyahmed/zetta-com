@@ -32,10 +32,13 @@ pub enum Action {
     MessageAll,
     /// Go on or off air without touching the window. The frontend owns start
     /// and stop — it holds the port and reports the errors — so this asks
-    /// rather than does, the same way AddPc does.
+    /// rather than does, the same way ShowShortcuts does.
     ToggleTransport,
-    /// Open the window with the add-a-PC field ready.
-    AddPc,
+    // There is deliberately no key for adding a PC. It was Ctrl+Alt+A, and it
+    // is a thing you do once per machine, from a button that is already on
+    // screen — a global chord reserved system-wide for that is a cost with no
+    // return, and every key removed makes the ones that remain easier to hold
+    // in your head.
     /// Show the list of every key and what it does.
     ShowShortcuts,
     /// Bring the window up from the tray. v1 stamped this on a Start Menu
@@ -242,12 +245,6 @@ pub fn dispatch(
                 let _ = app.emit("toggle-transport", ());
             }
         }
-        Action::AddPc => {
-            if pressed {
-                reveal(app);
-                let _ = app.emit("open-add-pc", ());
-            }
-        }
         Action::ShowShortcuts => {
             if pressed {
                 reveal(app);
@@ -293,32 +290,27 @@ pub fn register_all(
     }
 
     for (label, spec, action) in [
-        (
-            "Talk to everyone",
-            "CommandOrControl+Alt+Digit0",
-            Action::TalkAll,
-        ),
+        // Talking is Ctrl+number, messaging is Ctrl+Shift+number: one modifier
+        // for the thing you do constantly, and the same number either way.
+        //
+        // These are *global* keys, so the app holds Ctrl+0…9 for every other
+        // application on the machine while it runs — browser tabs and editor
+        // tabs included. Chosen deliberately for the shorter chord; the app
+        // keys below stay on Ctrl+Alt, where nothing else is looking.
+        ("Talk to everyone", "CommandOrControl+Digit0", Action::TalkAll),
         (
             "Message everyone",
             "CommandOrControl+Shift+Digit0",
             Action::MessageAll,
         ),
-        (
-            "Start or stop",
-            "CommandOrControl+Alt+KeyS",
-            Action::ToggleTransport,
-        ),
-        ("Add a PC", "CommandOrControl+Alt+KeyA", Action::AddPc),
-        (
-            "Show shortcuts",
-            "CommandOrControl+Alt+KeyK",
-            Action::ShowShortcuts,
-        ),
-        (
-            "Open the window",
-            "CommandOrControl+Alt+KeyT",
-            Action::ShowWindow,
-        ),
+        // The app's own actions are single function keys rather than
+        // three-finger chords. These are pressed occasionally, which is exactly
+        // when a chord is hardest: nobody rehearses Ctrl+Alt+K, and a shortcut
+        // you have to look up is one you will not use. F1 for the key list
+        // because every other program on the machine has taught that already.
+        ("Start or stop", "F9", Action::ToggleTransport),
+        ("Open the window", "F10", Action::ShowWindow),
+        ("Show shortcuts", "F1", Action::ShowShortcuts),
     ] {
         bind(app, bindings, listing, label, spec, action);
     }
@@ -331,7 +323,7 @@ pub fn register_all(
             bindings,
             listing,
             &format!("Talk to PC {slot}"),
-            &format!("CommandOrControl+Alt+Digit{slot}"),
+            &format!("CommandOrControl+Digit{slot}"),
             Action::TalkTo(slot),
         );
         bind(

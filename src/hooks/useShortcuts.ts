@@ -16,10 +16,9 @@ export const useShortcuts = () => {
 	}, []);
 
 	useEffect(() => {
-		const unlisten = [
-			listen('show-shortcuts', () => setShowShortcuts(v => !v)),
-			listen('open-add-pc', () => setShowAddPc(true))
-		];
+		// Adding a PC lost its global key: it is a once-per-machine job with a
+		// button already on screen, and it was costing a system-wide chord.
+		const unlisten = [listen('show-shortcuts', () => setShowShortcuts(v => !v))];
 		// Each listen() resolves to its own unlisten. Without this every
 		// re-render would stack another one and a single keypress would fire
 		// the handler as many times as the component had rendered.
