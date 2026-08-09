@@ -282,6 +282,15 @@ impl Handle {
         buf[HEADER_LEN..HEADER_LEN + bytes.len()].copy_from_slice(bytes);
         let packet = &buf[..HEADER_LEN + bytes.len()];
 
+        // Logged because "nothing happened" needs to distinguish between no
+        // recipients and a send that failed. Sending to nobody is the far more
+        // common case and the one with no other symptom.
+        if targets.is_empty() {
+            eprintln!("[net] text not sent: nobody to send to");
+        } else {
+            eprintln!("[net] text -> {} peer(s): {:?}", targets.len(), targets);
+        }
+
         for addr in targets {
             if let Err(e) = self.socket.send_to(packet, addr) {
                 eprintln!("[net] text to {addr} failed: {e}");
@@ -607,6 +616,7 @@ pub fn start(
                 // showing, and refusing to display anything is a worse
                 // failure than a replacement character.
                 let text = String::from_utf8_lossy(&buf[HEADER_LEN..len]).to_string();
+                eprintln!("[net] text <- {from} ({} bytes)", len - HEADER_LEN);
                 let msg = Message {
                     id: rx_message_id.fetch_add(1, Ordering::Relaxed),
                     from: from.to_string(),
