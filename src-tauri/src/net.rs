@@ -186,6 +186,9 @@ pub struct Handle {
     last_audio: Arc<Mutex<HashMap<SocketAddr, Instant>>>,
     messages: Arc<Mutex<VecDeque<Message>>>,
     next_message_id: Arc<AtomicU64>,
+    /// Counts calls to `send_audio` so the recipient report can be throttled to
+    /// roughly one line a second at fifty frames a second.
+    sent_report: AtomicU64,
     /// Joined on drop. Setting the stop flag and returning was not enough: the
     /// receiver sits in `recv_from` for up to its 200 ms read timeout, and it
     /// holds a clone of the socket the whole time — so the port stayed bound
@@ -265,6 +268,31 @@ impl Handle {
             return;
         }
         let targets = self.recipients();
+
+        // Once a second while the key is held, say who this is going to.
+        // "The microphone is working" and "somebody is receiving it" are
+        // different claims, and with no line here an empty recipient list looks
+        // exactly like silence: audio frames are produced, counted, and thrown
+        // away without a word. A selected peer that is not live sends to
+        // nobody, which is the case worth naming out loud.
+        let n = self.sent_report.fetch_add(1, Ordering::Relaxed);
+        if n % 50 == 0 {
+            if targets.is_empty() {
+                let t = match self.targets.lock() {
+                    Ok(t) => t,
+                    Err(e) => e.into_inner(),
+                };
+                eprintln!(
+                    "[net] talking, but sending to nobody — {} known, {} live, target {:?}",
+                    t.known.len(),
+                    t.live.len(),
+                    self.target.lock().ok().and_then(|g| *g)
+                );
+            } else {
+                eprintln!("[net] talking to {} of them: {:?}", targets.len(), targets);
+            }
+        }
+
         if targets.is_empty() {
             return;
         }
@@ -775,6 +803,7 @@ pub fn start(
         last_audio,
         messages,
         next_message_id: message_id,
+        sent_report: AtomicU64::new(0),
         threads: vec![hb_thread, rx_thread],
     })
 }

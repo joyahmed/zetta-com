@@ -181,7 +181,13 @@ pub fn dispatch(
         // Held, not toggled. The key going up has to be as reliable as it
         // going down, or a missed release leaves the microphone open with
         // nothing on screen to say so.
-        Action::Talk => ptt.store(pressed, Ordering::Relaxed),
+        Action::Talk => {
+            // Said out loud because this is the first link in the chain: if the
+            // key never reaches here, no amount of looking at the socket will
+            // explain the silence.
+            eprintln!("[keys] talk key {}", if pressed { "down" } else { "up" });
+            ptt.store(pressed, Ordering::Relaxed)
+        }
 
         // On press only. Firing again on release would send everything twice.
         Action::Preset(text) => {
