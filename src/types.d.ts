@@ -93,12 +93,15 @@ type RosterProps = {
 	onTarget: (addr: string | null) => void;
 };
 
-type AdvancedProps = {
+type ConnectionProps = {
 	port: string;
 	peer: string;
 	onPort: (v: string) => void;
 	onPeer: (v: string) => void;
 	disabled: boolean;
+};
+
+type AdvancedProps = {
 	manual: string[];
 	onAdd: (addr: string) => Promise<void>;
 	onRemove: (addr: string) => Promise<void>;

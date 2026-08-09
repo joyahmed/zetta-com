@@ -1,19 +1,11 @@
 import { useState } from 'react';
-import { Field } from './Field';
 
-/// The escape hatch, not the main road. Discovery supplies peers on a normal
-/// network; everything here is for the ones that filter mDNS, and for a PC on
-/// another subnet that will never be discovered at all.
-export const Advanced = ({
-	port,
-	peer,
-	onPort,
-	onPeer,
-	disabled,
-	manual,
-	onAdd,
-	onRemove
-}: AdvancedProps) => {
+/// Machines added by hand.
+///
+/// The escape hatch, not the main road: discovery supplies peers on a normal
+/// network, and this is for the ones that filter mDNS, and for a PC on another
+/// subnet that will never be discovered at all.
+export const Advanced = ({ manual, onAdd, onRemove }: AdvancedProps) => {
 	const [draft, setDraft] = useState('');
 
 	const submit = async (e: React.FormEvent) => {
@@ -25,31 +17,31 @@ export const Advanced = ({
 	};
 
 	return (
-		<div className='flex flex-col gap-4'>
-			<div className='flex items-end gap-3'>
-				<Field
-					label='Port'
-					value={port}
-					onChange={onPort}
-					disabled={disabled}
-					className='w-24'
+		<div className='flex flex-col gap-3'>
+			{/* Adding restarts the transport, so the change takes effect
+			    immediately rather than at the next launch. */}
+			<form className='flex gap-2' onSubmit={submit}>
+				<input
+					value={draft}
+					onChange={e => setDraft(e.currentTarget.value)}
+					placeholder='192.168.0.42:9001'
+					className='flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm outline-none focus:border-teal-500 dark:border-slate-700 dark:bg-slate-900'
 				/>
-				<Field
-					label='Address'
-					value={peer}
-					onChange={onPeer}
-					disabled={disabled}
-					placeholder='192.168.0.142:9001'
-					className='flex-1'
-				/>
-			</div>
+				<button
+					type='submit'
+					className='rounded-lg bg-teal-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-teal-500'
+				>
+					Add
+				</button>
+			</form>
 
-			<div className='flex flex-col gap-2'>
-				<span className='text-xs font-medium tracking-wide text-slate-500 uppercase dark:text-slate-400'>
-					PCs added by hand
-				</span>
-
-				{manual.map(addr => (
+			{manual.length === 0 ? (
+				<p className='text-xs text-slate-500 dark:text-slate-400'>
+					Nothing added by hand. Everything in the roster was found by
+					discovery.
+				</p>
+			) : (
+				manual.map(addr => (
 					<div
 						key={addr}
 						className='flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-1.5 dark:border-slate-800'
@@ -65,25 +57,8 @@ export const Advanced = ({
 							remove
 						</button>
 					</div>
-				))}
-
-				{/* Adding restarts the transport, so the change takes effect
-				    immediately rather than at the next launch. */}
-				<form className='flex gap-2' onSubmit={submit}>
-					<input
-						value={draft}
-						onChange={e => setDraft(e.currentTarget.value)}
-						placeholder='192.168.0.42:9001'
-						className='flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm outline-none focus:border-teal-500 dark:border-slate-700 dark:bg-slate-900'
-					/>
-					<button
-						type='submit'
-						className='rounded-lg border border-slate-300 px-3 py-2 text-sm hover:border-teal-500 dark:border-slate-700'
-					>
-						Add
-					</button>
-				</form>
-			</div>
+				))
+			)}
 		</div>
 	);
 };

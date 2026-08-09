@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Advanced } from './components/Advanced';
 import { Alert } from './components/Alert';
+import { Connection } from './components/Connection';
 import { Diagnostics } from './components/Diagnostics';
 import { Messages } from './components/Messages';
 import { Modal } from './components/Modal';
@@ -112,18 +113,7 @@ const App = () => {
 					onClose: () => setShowAddPc(false)
 				}}
 			>
-				<Advanced
-					{...{
-						port,
-						peer,
-						onPort: setPort,
-						onPeer: setPeer,
-						disabled: running,
-						manual,
-						onAdd: add,
-						onRemove: remove
-					}}
-				/>
+				<Advanced {...{ manual, onAdd: add, onRemove: remove }} />
 
 				<div className='mt-5 flex flex-col gap-2'>
 					<h3 className='text-xs font-medium tracking-wide text-slate-500 uppercase dark:text-slate-400'>
@@ -140,7 +130,18 @@ const App = () => {
 					onClose: () => setShowSettings(false)
 				}}
 			>
-				<Diagnostics {...{ stats, running }} />
+				<div className='flex flex-col gap-5'>
+					<Connection
+						{...{ port, peer, onPort: setPort, onPeer: setPeer, disabled: running }}
+					/>
+
+					<div className='flex flex-col gap-2'>
+						<h3 className='text-xs font-medium tracking-wide text-slate-500 uppercase dark:text-slate-400'>
+							Diagnostics
+						</h3>
+						<Diagnostics {...{ stats, running }} />
+					</div>
+				</div>
 			</Modal>
 		</div>
 	);
