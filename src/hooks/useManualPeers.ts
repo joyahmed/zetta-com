@@ -7,10 +7,14 @@ import { useEffect, useState } from 'react';
 /// has to bind to it before any window exists. This hook is a view of it.
 export const useManualPeers = (onError: (message: string) => void) => {
 	const [manual, setManual] = useState<string[]>([]);
+	const [presets, setPresets] = useState<Preset[]>([]);
 
 	useEffect(() => {
 		invoke<Config | null>('config_get')
-			.then(c => setManual(c?.manual ?? []))
+			.then(c => {
+				setManual(c?.manual ?? []);
+				setPresets(c?.presets ?? []);
+			})
 			.catch(() => {});
 	}, []);
 
@@ -30,5 +34,5 @@ export const useManualPeers = (onError: (message: string) => void) => {
 		}
 	};
 
-	return { manual, add, remove };
+	return { manual, presets, add, remove };
 };

@@ -7,7 +7,7 @@ mod session;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Shortcut, ShortcutState};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 use tauri::{
     menu::{Menu, MenuItem},
@@ -32,9 +32,46 @@ struct NetState(Mutex<Option<session::Session>>);
 /// pressed Stop and Start.
 struct Ptt(Arc<AtomicBool>);
 
-/// The push-to-talk key. F8 by default — a single key, so it can be *held*,
-/// and one nothing else tends to claim. Reassignable in #13.
-const PTT_KEY: Code = Code::F8;
+/// What a registered shortcut does.
+#[derive(Clone)]
+enum Action {
+    /// Held, not toggled.
+    Talk,
+    /// Fires a canned message.
+    Preset(String),
+}
+
+/// The registered shortcuts and what each one means, shared with the handler.
+///
+/// A list rather than a map because `Shortcut` is compared, not hashed, and
+/// there are never more than a handful.
+type Bindings = Arc<Mutex<Vec<(Shortcut, Action)>>>;
+
+/// Register a shortcut and remember what it does.
+///
+/// A global shortcut that loses a registration race to another application does
+/// nothing and says nothing, which is a v1-class silent failure — so both the
+/// parse and the registration report rather than being discarded.
+fn bind(app: &tauri::AppHandle, bindings: &Bindings, spec: &str, action: Action) {
+    if spec.trim().is_empty() {
+        return;
+    }
+    let shortcut: Shortcut = match spec.parse() {
+        Ok(s) => s,
+        Err(e) => return eprintln!("[keys] {spec:?} is not a shortcut: {e}"),
+    };
+    match app.global_shortcut().register(shortcut) {
+        Ok(()) => {
+            let mut list = match bindings.lock() {
+                Ok(l) => l,
+                Err(e) => e.into_inner(),
+            };
+            list.push((shortcut, action));
+            eprintln!("[keys] {spec} registered");
+        }
+        Err(e) => eprintln!("[keys] {spec} could not be registered: {e}"),
+    }
+}
 
 /// Commands return `Result<_, String>` rather than `anyhow::Result` because
 /// anyhow's error type is not serialisable across the IPC boundary. The
@@ -58,14 +95,13 @@ fn net_start(
 
     // Saved only after a successful bind, so a setting that cannot work is
     // never the one restored at next launch.
-    if let Err(e) = config::save(
-        &app,
-        &config::Config {
-            port,
-            peer,
-            manual,
-        },
-    ) {
+    // Merged into whatever is already there rather than replacing it, or
+    // pressing Start would silently wipe the presets and the key bindings.
+    let mut cfg = config::load(&app).unwrap_or_default();
+    cfg.port = port;
+    cfg.peer = peer;
+    cfg.manual = manual;
+    if let Err(e) = config::save(&app, &cfg) {
         eprintln!("[config] not saved: {e:#}");
     }
     Ok(())
@@ -212,22 +248,50 @@ pub fn run() {
     // session need it, and the handler is installed while the app is being
     // configured rather than after.
     let ptt = Arc::new(AtomicBool::new(false));
+    let bindings: Bindings = Arc::new(Mutex::new(Vec::new()));
+
     let ptt_for_handler = ptt.clone();
+    let bindings_for_handler = bindings.clone();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_notification::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(move |_app, shortcut, event| {
-                    if shortcut.matches(tauri_plugin_global_shortcut::Modifiers::empty(), PTT_KEY) {
+                .with_handler(move |app, shortcut, event| {
+                    let action = {
+                        let list = match bindings_for_handler.lock() {
+                            Ok(l) => l,
+                            Err(e) => e.into_inner(),
+                        };
+                        list.iter()
+                            .find(|(s, _)| s == shortcut)
+                            .map(|(_, a)| a.clone())
+                    };
+                    let Some(action) = action else { return };
+
+                    match action {
                         // Held, not toggled. The key going up has to be as
                         // reliable as it going down, or a missed release
                         // leaves the microphone open with nothing on screen
                         // to say so.
-                        ptt_for_handler.store(
+                        Action::Talk => ptt_for_handler.store(
                             matches!(event.state(), ShortcutState::Pressed),
                             Ordering::Relaxed,
-                        );
+                        ),
+                        // On press only. Firing again on release would send
+                        // every canned message twice.
+                        Action::Preset(text) => {
+                            if matches!(event.state(), ShortcutState::Pressed) {
+                                if let Some(s) =
+                                    app.state::<NetState>().0.lock().ok().and_then(|g| {
+                                        g.as_ref().map(|s| s.send_text(&text))
+                                    })
+                                {
+                                    let _ = s;
+                                }
+                            }
+                        }
                     }
                 })
                 .build(),
@@ -278,9 +342,16 @@ pub fn run() {
             // registration race to another application does nothing and says
             // nothing, which is a v1-class silent failure, so the result is
             // reported rather than discarded.
-            match app.global_shortcut().register(Shortcut::new(None, PTT_KEY)) {
-                Ok(()) => eprintln!("[ptt] hold {PTT_KEY:?} to talk"),
-                Err(e) => eprintln!("[ptt] could not register {PTT_KEY:?}: {e}"),
+            let cfg = config::load(app.handle()).unwrap_or_default();
+            let handle = app.handle().clone();
+            bind(&handle, &bindings, &cfg.talk_shortcut, Action::Talk);
+            for p in &cfg.presets {
+                bind(
+                    &handle,
+                    &bindings,
+                    &p.shortcut,
+                    Action::Preset(p.text.clone()),
+                );
             }
             app.manage(Ptt(ptt.clone()));
 

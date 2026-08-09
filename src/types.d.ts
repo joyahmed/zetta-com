@@ -12,7 +12,21 @@ type Saved = { port: string; peer: string };
 
 /// Mirrors the Rust side's transport.json. The transport reads this before any
 /// window exists, which is why it is not localStorage.
-type Config = { port: number; peer: string; manual: string[] };
+type Preset = { label: string; text: string; shortcut: string };
+
+type Config = {
+	port: number;
+	peer: string;
+	manual: string[];
+	talkShortcut: string;
+	presets: Preset[];
+};
+
+type PresetsProps = {
+	presets: Preset[];
+	onSend: (text: string) => void;
+	disabled: boolean;
+};
 
 /// Someone found on the LAN. `live` goes false when nothing has been heard from
 /// them for a while — they stay in the roster rather than vanishing, because

@@ -1,5 +1,10 @@
 import { invoke } from '@tauri-apps/api/core';
-import { useEffect, useState } from 'react';
+import {
+	isPermissionGranted,
+	requestPermission,
+	sendNotification
+} from '@tauri-apps/plugin-notification';
+import { useEffect, useRef, useState } from 'react';
 
 const POLL_MS = 600;
 
@@ -8,6 +13,18 @@ const POLL_MS = 600;
 /// was no way to tell which half had failed.
 export const useMessages = (running: boolean) => {
 	const [messages, setMessages] = useState<Message[]>([]);
+	// Highest id already seen. Notifying on anything above it means a restart
+	// never replays the whole log at you as a burst of toasts.
+	const seen = useRef(0);
+	const allowed = useRef(false);
+
+	useEffect(() => {
+		(async () => {
+			allowed.current =
+				(await isPermissionGranted()) ||
+				(await requestPermission()) === 'granted';
+		})().catch(() => {});
+	}, []);
 
 	useEffect(() => {
 		if (!running) {
@@ -18,7 +35,23 @@ export const useMessages = (running: boolean) => {
 		const id = setInterval(async () => {
 			try {
 				const m = await invoke<Message[]>('messages');
-				if (alive) setMessages(m);
+				if (!alive) return;
+				setMessages(m);
+
+				// Only what arrived, and only when the window is not being
+				// looked at. This app lives in the tray; a notification for a
+				// message already on screen is noise.
+				if (allowed.current && document.hidden) {
+					for (const msg of m) {
+						if (msg.id > seen.current && !msg.mine) {
+							sendNotification({
+								title: msg.from || 'Intercom',
+								body: msg.text
+							});
+						}
+					}
+				}
+				seen.current = Math.max(seen.current, ...m.map(x => x.id), 0);
 			} catch {
 				// The transport reports its own failures; a missed poll here
 				// would only duplicate them.

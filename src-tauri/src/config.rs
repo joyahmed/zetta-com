@@ -29,6 +29,47 @@ pub struct Config {
     /// otherwise adding a setting would silently reset everyone's port.
     #[serde(default)]
     pub manual: Vec<String>,
+
+    /// Hold this to talk. A single key by default so it can be *held*, and one
+    /// nothing else tends to claim.
+    #[serde(default = "default_talk_shortcut")]
+    pub talk_shortcut: String,
+
+    /// Canned messages, each on its own key. This is what "auto message" means
+    /// here: a short editable list sent with one keystroke and no typing —
+    /// not auto-replies, and not scheduled announcements.
+    #[serde(default = "default_presets")]
+    pub presets: Vec<Preset>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct Preset {
+    pub label: String,
+    pub text: String,
+    /// Empty means the preset exists but has no key — useful, since there are
+    /// only so many combinations worth spending.
+    #[serde(default)]
+    pub shortcut: String,
+}
+
+fn default_talk_shortcut() -> String {
+    "F8".to_string()
+}
+
+fn default_presets() -> Vec<Preset> {
+    [
+        ("On my way", "On my way", "CommandOrControl+Alt+1"),
+        ("Lunch?", "Lunch?", "CommandOrControl+Alt+2"),
+        ("Call me", "Call me", "CommandOrControl+Alt+3"),
+    ]
+    .into_iter()
+    .map(|(label, text, shortcut)| Preset {
+        label: label.to_string(),
+        text: text.to_string(),
+        shortcut: shortcut.to_string(),
+    })
+    .collect()
 }
 
 fn path(app: &AppHandle) -> Result<PathBuf> {
