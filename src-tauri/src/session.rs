@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -36,16 +36,29 @@ pub struct Session {
     manual: Vec<discovery::Peer>,
     /// Your name for a machine, by address. Overrides everything else, being
     /// the only name anybody chose deliberately.
-    labels: HashMap<String, String>,
+    ///
+    /// Behind a lock so renaming can be applied to a running session. It used
+    /// to be plain, which meant a rename had to rebuild the whole session to
+    /// take effect — tearing down the socket and rebinding it for what is only
+    /// ever a display name.
+    labels: Mutex<HashMap<String, String>>,
     stop: Arc<AtomicBool>,
+    /// Joined on drop, before the net handle's last reference goes with them.
+    threads: Vec<thread::JoinHandle<()>>,
 }
 
 impl Drop for Session {
     fn drop(&mut self) {
-        // The pump thread holds the other reference to the net handle, so the
-        // socket closes once it sees this flag and lets go — a moment after
-        // this returns rather than during it.
         self.stop.store(true, Ordering::Relaxed);
+        // These hold the other references to the net handle, so the handle —
+        // and the socket inside it — cannot be dropped until they are done.
+        // Setting the flag and returning left the port bound for a moment
+        // after the session was gone, and anything that rebound in that moment
+        // failed with "Only one usage of each socket address is normally
+        // permitted".
+        for t in self.threads.drain(..) {
+            let _ = t.join();
+        }
     }
 }
 
@@ -89,6 +102,19 @@ impl Session {
         msgs
     }
 
+    /// Your names for machines, applied to a session that is already running.
+    ///
+    /// A rename is a display change and nothing more — it never reaches the
+    /// socket — so it must not cost a rebind. Doing it that way was what made
+    /// renaming fail with "address already in use".
+    pub fn set_labels(&self, labels: HashMap<String, String>) {
+        let mut guard = match self.labels.lock() {
+            Ok(l) => l,
+            Err(e) => e.into_inner(),
+        };
+        *guard = labels;
+    }
+
     /// Empty when discovery could not start — which is a normal state on a
     /// network that filters mDNS, not a failure of the session.
     ///
@@ -98,6 +124,10 @@ impl Session {
     /// discovered for a while, and a roster claiming somebody can hear you when
     /// they cannot is worse than no roster at all.
     pub fn peers(&self) -> Vec<discovery::Peer> {
+        let labels = match self.labels.lock() {
+            Ok(l) => l,
+            Err(e) => e.into_inner(),
+        };
         let mut peers = self
             .discovery
             .as_ref()
@@ -129,7 +159,7 @@ impl Session {
             // Your own name wins over both. A PC name is what the machine calls
             // itself; this is what you call the person sitting at it, and it is
             // the only one anybody chose on purpose.
-            if let Some(label) = self.labels.get(&p.addr.to_string()) {
+            if let Some(label) = labels.get(&p.addr.to_string()) {
                 if !label.trim().is_empty() {
                     p.name = label.clone();
                 }
@@ -201,7 +231,7 @@ pub fn start(
 
     // The microphone sets the pace: one send per encoded frame, no timer to
     // drift against the capture rate.
-    thread::Builder::new()
+    let pump_thread = thread::Builder::new()
         .name("session-pump".into())
         .spawn(move || {
             while !pump_stop.load(Ordering::Relaxed) {
@@ -233,7 +263,7 @@ pub fn start(
     let sync_net = net.clone();
     let sync_discovery = discovery.clone();
     let sync_manual = manual.clone();
-    thread::Builder::new()
+    let sync_thread = thread::Builder::new()
         .name("roster-sync".into())
         .spawn(move || {
             while !sync_stop.load(Ordering::Relaxed) {
@@ -259,7 +289,16 @@ pub fn start(
                     })
                     .collect();
                 sync_net.set_targets(known, live);
-                thread::sleep(Duration::from_secs(1));
+                // A second, but checked ten times, so stopping waits a tenth
+                // of a second rather than a whole one. This thread is joined on
+                // drop now, and a sleeping thread is a rebind that has to wait
+                // for it.
+                for _ in 0..10 {
+                    if sync_stop.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    thread::sleep(Duration::from_millis(100));
+                }
             }
         })?;
 
@@ -268,7 +307,8 @@ pub fn start(
         net,
         discovery,
         manual,
-        labels,
+        labels: Mutex::new(labels),
         stop,
+        threads: vec![pump_thread, sync_thread],
     })
 }

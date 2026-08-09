@@ -186,11 +186,22 @@ pub struct Handle {
     last_audio: Arc<Mutex<HashMap<SocketAddr, Instant>>>,
     messages: Arc<Mutex<VecDeque<Message>>>,
     next_message_id: Arc<AtomicU64>,
+    /// Joined on drop. Setting the stop flag and returning was not enough: the
+    /// receiver sits in `recv_from` for up to its 200 ms read timeout, and it
+    /// holds a clone of the socket the whole time — so the port stayed bound
+    /// after the handle was gone, and anything that rebound immediately failed
+    /// with "Only one usage of each socket address is normally permitted".
+    threads: Vec<thread::JoinHandle<()>>,
 }
 
 impl Drop for Handle {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
+        // Up to one read timeout, once, on stop or restart. Worth it: the
+        // alternative is a rebind that races the socket it is replacing.
+        for t in self.threads.drain(..) {
+            let _ = t.join();
+        }
     }
 }
 
@@ -588,7 +599,7 @@ pub fn start(
     let hb_stop = stop.clone();
     let hb_targets = targets.clone();
     let local_name = local_name.to_string();
-    thread::Builder::new()
+    let hb_thread = thread::Builder::new()
         .name("net-heartbeat".into())
         .spawn(move || {
             // Its own sequence space, fixed at zero: heartbeats must not
@@ -639,7 +650,7 @@ pub fn start(
     // Shared with the Handle rather than a second counter, so sent and received
     // lines interleave in the order they actually happened.
     let rx_message_id = message_id.clone();
-    thread::Builder::new().name("net-rx".into()).spawn(move || {
+    let rx_thread = thread::Builder::new().name("net-rx".into()).spawn(move || {
         let mut buf = [0u8; 2048];
         // One reorder window per source. Sequence numbers are per-sender, so a
         // shared window would treat two people talking as one stream full of
@@ -764,5 +775,6 @@ pub fn start(
         last_audio,
         messages,
         next_message_id: message_id,
+        threads: vec![hb_thread, rx_thread],
     })
 }

@@ -138,13 +138,23 @@ pub fn send_text(state: State<NetState>, text: String) -> Result<(), String> {
 
 /// Give a machine your own name for it, or clear it with an empty string.
 ///
-/// Restarts the session so it takes effect, same as adding a peer: renaming is
-/// rare, and one code path that rebuilds beats two that have to agree.
+/// Applied to the running session in place. It used to rebuild the session the
+/// way adding a peer does, on the reasoning that one code path beats two — but
+/// a label never reaches the socket, and rebuilding meant unbinding the port
+/// and immediately rebinding it. The old socket was still being released by its
+/// reader thread, so renaming failed with
+///
+/// ```text
+/// binding 0.0.0.0:9001: Only one usage of each socket address … (os error 10048)
+/// ```
+///
+/// and left the transport stopped until Start was pressed again. Teardown waits
+/// for its threads now, so the rebuild would work — but the right fix is not to
+/// rebuild for a display name in the first place.
 #[tauri::command]
 pub fn set_label(
     app: tauri::AppHandle,
     state: State<NetState>,
-    ptt: State<Ptt>,
     addr: String,
     label: String,
 ) -> Result<(), String> {
@@ -157,19 +167,9 @@ pub fn set_label(
     }
     config::save(&app, &cfg).map_err(|e| format!("{e:#}"))?;
 
-    let mut guard = state.0.lock().map_err(|e| e.to_string())?;
-    if guard.is_some() {
-        *guard = None;
-        *guard = Some(
-            session::start(
-                config::port_override().unwrap_or(cfg.port),
-                &cfg.peer,
-                &cfg.manual,
-                cfg.labels.clone(),
-                ptt.0.clone(),
-            )
-            .map_err(|e| format!("{e:#}"))?,
-        );
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    if let Some(s) = guard.as_ref() {
+        s.set_labels(cfg.labels.clone());
     }
     Ok(())
 }
