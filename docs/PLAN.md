@@ -120,27 +120,27 @@ playback ← ring B ← mixer ◄── per-peer decoders ◄── net rx
 Sequenced so the riskiest thing is proven first, and every slice runs and shows
 something before the next one starts.
 
-> ### ▶ Next: **5 — text and notifications**
+> ### ▶ Next: **6 — packaging**
 >
-> `kind=1` UTF-8 messages on the socket that already exists, native
-> notifications, and a message log. Then preset messages on a key (#15), which
-> is what "auto message" turned out to mean.
+> Steps 0 to 5 are complete. What remains is shipping: MSI and the other
+> bundles, an all-profile firewall rule created by the installer rather than by
+> a prompt somebody might cancel (#11), recovering when the audio device changes
+> or disappears (#9), gating the once-a-second stats line, and a LICENSE and
+> README for a repo that is already public (#16).
 >
-> Voice and text stay separate as actions and as code paths — in v1 one keypress
-> did both, and that coupling is exactly what made a failure unreadable.
->
-> Still open from earlier steps, neither blocking: peers added by hand (#12) and
-> the rest of the shortcut set (#13).
+> Also outstanding, and worth doing before anyone else sees it: the design pass
+> over roster, talk state and messages, now that all three exist to be designed
+> together.
 
 | Step | | |
 |---|---|---|
 | 0 | Skeleton | ✅ done |
 | 1 | Audio loopback in-process | ✅ done |
 | 2 | Transport | ✅ done |
-| 3 | Discovery and presence | ✅ done (manual peers #12 outstanding) |
-| 4 | Push-to-talk | ✅ done (shortcut set #13 outstanding) |
-| 5 | Text and notifications | ☐ **next** |
-| 6 | Packaging | ☐ |
+| 3 | Discovery and presence | ✅ done |
+| 4 | Push-to-talk | ✅ done |
+| 5 | Text and notifications | ✅ done |
+| 6 | Packaging | ☐ **next** |
 
 ### 0. Skeleton ✅
 
@@ -174,7 +174,7 @@ Also landed here, unplanned: the `session` module owning audio and net; capture
 and playback made independently optional; and the transport auto-starting from
 `transport.json` so a listening PC needs nobody to click anything.
 
-### 3. Discovery and presence — in progress
+### 3. Discovery and presence ✅
 
 - [x] **3a** `mdns-sd` advertise and browse; peers appear and vanish in the log.
 - [x] **3b** Roster in the UI, with the address behind Advanced.
@@ -187,7 +187,7 @@ and playback made independently optional; and the transport auto-starting from
       to everyone *live* — if both went to the live set, two instances that had
       never heard each other would deadlock waiting for the other to speak. The
       manual address is now optional rather than required.
-- [ ] Peers added by hand, merged with discovered ones (#12).
+- [x] Peers added by hand, merged with discovered ones (#12).
 
 *Done when:* a second instance appears within a couple of seconds and greys out
 within the timeout when killed.
@@ -195,7 +195,7 @@ within the timeout when killed.
 This is the thing the old version could never do, and it removes most of the
 "is it even working" debugging.
 
-### 4. Push-to-talk
+### 4. Push-to-talk ✅
 
 - [x] **4a** F8 held is the only thing that sends. Registered globally in Rust
       so it works unfocused; a failed registration is reported rather than
@@ -208,20 +208,22 @@ This is the thing the old version could never do, and it removes most of the
 - [x] **4c** Local playback silenced while transmitting. **This is the whole
       echo strategy.** Capture keeps draining its ring while the key is up, or
       the first thing anyone heard on pressing it would be stale room noise.
-- [ ] The full shortcut set — no per-person keys (#13).
+- [x] The full shortcut set — no per-person keys (#13).
 
 *Done when:* hold to talk, release to listen, no feedback with speakers on.
 
-### 5. Text and notifications
+### 5. Text and notifications ✅
 
 - [x] **5a** `kind=1` UTF-8 messages on the same socket. Text does not ride the
       audio sequence — it is not a stream, and advancing that counter would
       punch holes in the reorder window at the far end.
-- [ ] **5b** Native notifications. ← **next**
+- [x] **5b** Native notifications, only for messages that arrived while the
+      window was hidden — this app lives in the tray, so a toast for a line
+      already on screen is noise.
 - [x] **5c** Message log. Sent lines are logged whether or not anybody was live,
       so an empty roster cannot be mistaken for a broken keyboard.
-- [ ] Voice and text kept separate as actions and code paths (#14).
-- [ ] Preset messages, one shortcut each (#15).
+- [x] Voice and text kept separate as actions and code paths (#14).
+- [x] Preset messages, one shortcut each (#15).
 
 Then the design pass, once roster, talk state and messages all exist to be
 designed together rather than four times over.
