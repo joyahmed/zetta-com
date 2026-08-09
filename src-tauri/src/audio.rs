@@ -258,31 +258,47 @@ fn build(
     let out_sel = select(&host, false);
 
     if in_sel.is_none() && out_sel.is_none() {
-        return Err(anyhow!(
-            "no usable audio device for either capture or playback"
-        ));
+        eprintln!("[audio] no usable audio device at all — text only");
     }
 
     let stats = Arc::new(Stats::default());
 
+    // A stream that refuses to build is treated exactly like a device that was
+    // not there. It is the same situation from the app's point of view, and
+    // failing the whole pipeline over one direction is how a stereo-only
+    // speaker ended up preventing text messages from working.
     let input_stream = match in_sel {
-        Some((device, cfg)) => Some(build_capture(
-            &device, &cfg, stop, generation, rebuild, transmit, &stats, out_tx,
-        )?),
+        Some((device, cfg)) => {
+            match build_capture(
+                &device, &cfg, stop, generation, rebuild, transmit, &stats, out_tx,
+            ) {
+                Ok(s) => Some(s),
+                Err(e) => {
+                    eprintln!("[audio] capture unavailable, listening only: {e:#}");
+                    None
+                }
+            }
+        }
         None => {
             eprintln!("[audio] no usable input device — listening only");
-            drop(out_tx);
             None
         }
     };
 
     let output_stream = match out_sel {
-        Some((device, cfg)) => Some(build_playback(
-            &device, &cfg, stop, generation, rebuild, transmit, &stats, in_rx,
-        )?),
+        Some((device, cfg)) => {
+            match build_playback(
+                &device, &cfg, stop, generation, rebuild, transmit, &stats, in_rx,
+            ) {
+                Ok(s) => Some(s),
+                Err(e) => {
+                    eprintln!("[audio] playback unavailable, sending only: {e:#}");
+                    None
+                }
+            }
+        }
         None => {
             eprintln!("[audio] no usable output device — sending only");
-            drop(in_rx);
             None
         }
     };
