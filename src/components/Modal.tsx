@@ -21,14 +21,14 @@ export const Modal = ({ title, open, onClose, children }: ModalProps) => {
 
 	return (
 		<div
-			className='fixed inset-0 z-50 flex items-end justify-center bg-slate-950/50 p-3 backdrop-blur-sm sm:items-center'
+			className='fixed inset-0 z-50 flex items-start justify-center bg-slate-950/50 p-3 pt-14 backdrop-blur-sm'
 			onClick={onClose}
 		>
 			<div
 				// Stops a click inside the panel from reaching the backdrop and
 				// closing the thing you are trying to use.
 				onClick={e => e.stopPropagation()}
-				className='flex max-h-[85vh] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 shadow-2xl dark:border-slate-800 dark:bg-slate-950'
+				className='flex max-h-[80vh] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 shadow-2xl dark:border-slate-800 dark:bg-slate-950'
 			>
 				<header className='flex items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-slate-800'>
 					<h2 className='text-sm font-semibold'>{title}</h2>
