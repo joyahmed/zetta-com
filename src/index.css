@@ -1,0 +1,6 @@
+@import "tailwindcss";
+
+/* Tailwind v4 is configured here, in CSS, not in a tailwind.config.js — that
+   file is a v3 idiom and does nothing now. Design tokens go in an @theme block
+   in this file when the palette is decided (step 5, once the roster, talk state
+   and message log all exist to design against). */
