@@ -172,29 +172,71 @@ fn build(stop: &Arc<AtomicBool>) -> Result<Streams> {
         f => return Err(anyhow!("unsupported input sample format {f:?}")),
     };
 
+    // Playback priming. The decoder delivers a whole frame at once every 20 ms
+    // while this callback asks for samples on its own schedule, so the ring is
+    // routinely a few samples short of what is being asked for. Filling that
+    // shortfall with zeros puts a sub-millisecond gap inside a frame, and a gap
+    // that often is heard as a screech, not as silence. So: stay quiet until a
+    // few frames have banked, then drain whole callbacks only; if it ever runs
+    // dry, go quiet and bank again. Silence in clean chunks is inaudible.
+    let prime = out_frame * 3;
+
     let output_stream = match out_cfg.sample_format() {
-        SampleFormat::F32 => output.build_output_stream(
-            out_stream_cfg.clone(),
-            move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                for frame in data.chunks_exact_mut(out_ch) {
-                    // Underrun plays silence rather than stalling.
-                    let v = cons_b.try_pop().unwrap_or(0) as f32 / i16::MAX as f32;
-                    frame.fill(v);
-                }
-            },
-            on_err,
-            None,
-        )?,
-        SampleFormat::I16 => output.build_output_stream(
-            out_stream_cfg.clone(),
-            move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
-                for frame in data.chunks_exact_mut(out_ch) {
-                    frame.fill(cons_b.try_pop().unwrap_or(0));
-                }
-            },
-            on_err,
-            None,
-        )?,
+        SampleFormat::F32 => {
+            // Captured by the FnMut closure. Only this callback touches it, so
+            // it needs no atomic and no lock — which matters on an RT thread.
+            let mut primed = false;
+            output.build_output_stream(
+                out_stream_cfg.clone(),
+                move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                    let need = data.len() / out_ch;
+                    if !primed {
+                        if cons_b.occupied_len() < prime {
+                            data.fill(0.0);
+                            return;
+                        }
+                        primed = true;
+                    }
+                    if cons_b.occupied_len() < need {
+                        primed = false;
+                        data.fill(0.0);
+                        return;
+                    }
+                    for frame in data.chunks_exact_mut(out_ch) {
+                        let v = cons_b.try_pop().unwrap_or(0) as f32 / i16::MAX as f32;
+                        frame.fill(v);
+                    }
+                },
+                on_err,
+                None,
+            )?
+        }
+        SampleFormat::I16 => {
+            let mut primed = false;
+            output.build_output_stream(
+                out_stream_cfg.clone(),
+                move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
+                    let need = data.len() / out_ch;
+                    if !primed {
+                        if cons_b.occupied_len() < prime {
+                            data.fill(0);
+                            return;
+                        }
+                        primed = true;
+                    }
+                    if cons_b.occupied_len() < need {
+                        primed = false;
+                        data.fill(0);
+                        return;
+                    }
+                    for frame in data.chunks_exact_mut(out_ch) {
+                        frame.fill(cons_b.try_pop().unwrap_or(0));
+                    }
+                },
+                on_err,
+                None,
+            )?
+        }
         f => return Err(anyhow!("unsupported output sample format {f:?}")),
     };
 
