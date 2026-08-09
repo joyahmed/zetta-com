@@ -1,8 +1,10 @@
+import { useState } from 'react';
 import { Advanced } from './components/Advanced';
 import { Alert } from './components/Alert';
 import { Diagnostics } from './components/Diagnostics';
-import { Disclosure } from './components/Disclosure';
 import { Messages } from './components/Messages';
+import { Modal } from './components/Modal';
+import { Nav } from './components/Nav';
 import { Presets } from './components/Presets';
 import { Roster } from './components/Roster';
 import { Shortcuts } from './components/Shortcuts';
@@ -41,6 +43,7 @@ const App = () => {
 		showAddPc,
 		setShowAddPc
 	} = useShortcuts();
+	const [showSettings, setShowSettings] = useState(false);
 
 	// Named for the talk bar and the message box, so it always says who is
 	// about to be addressed rather than leaving it to be remembered.
@@ -50,30 +53,23 @@ const App = () => {
 			: (peers.find(p => p.addr === target)?.name ?? target);
 
 	return (
-		<main className='min-h-screen bg-slate-50 px-6 py-8 text-slate-900 dark:bg-slate-950 dark:text-slate-100'>
-			<div className='mx-auto flex w-full max-w-lg flex-col gap-5'>
-				<header className='flex items-start justify-between'>
-					<div>
-						<h1 className='text-xl font-semibold tracking-tight'>
-							Intercom
-						</h1>
-						<p className='text-xs text-slate-500 dark:text-slate-400'>
-							{me ? `You are ${me}` : ' '}
-						</p>
-					</div>
-					<button
-						type='button'
-						onClick={running ? stop : start}
-						className={`rounded-lg px-4 py-2 text-sm font-medium text-white transition ${
-							running
-								? 'bg-slate-700 hover:bg-slate-600'
-								: 'bg-teal-600 hover:bg-teal-500'
-						}`}
-					>
-						{running ? 'Stop' : 'Start'}
-					</button>
-				</header>
+		<div className='flex min-h-screen flex-col bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100'>
+			<Nav
+				me={me}
+				running={running}
+				onToggle={running ? stop : start}
+				onAddPc={() => setShowAddPc(true)}
+				onShortcuts={() => setShowShortcuts(true)}
+				onSettings={() => setShowSettings(true)}
+				{...{
+					me
+				}}
+			/>
 
+			{/* The main screen is the two things this app is: who you are
+			    talking to, and what has been said. Everything else is behind
+			    the bar. */}
+			<main className='flex flex-1 flex-col gap-4 p-4'>
 				{error && <Alert message={error} />}
 
 				{running && <TalkBar held={held} key_='F8' to={targetName} />}
@@ -85,11 +81,7 @@ const App = () => {
 					onTarget={setTarget}
 				/>
 
-				<Presets
-					presets={presets}
-					onSend={send}
-					disabled={!running}
-				/>
+				<Presets presets={presets} onSend={send} disabled={!running} />
 
 				<Messages
 					messages={messages}
@@ -97,37 +89,41 @@ const App = () => {
 					disabled={!running}
 					to={targetName}
 				/>
+			</main>
 
-				<Disclosure
-					label='Shortcuts'
-					open={showShortcuts}
-					onOpenChange={setShowShortcuts}
-				>
-					<Shortcuts shortcuts={shortcuts} />
-				</Disclosure>
+			<Modal
+				title='Shortcuts'
+				open={showShortcuts}
+				onClose={() => setShowShortcuts(false)}
+			>
+				<Shortcuts shortcuts={shortcuts} />
+			</Modal>
 
-				<Disclosure
-					label='Advanced'
-					open={showAddPc || undefined}
-					onOpenChange={setShowAddPc}
-				>
-					<Advanced
-						port={port}
-						peer={peer}
-						onPort={setPort}
-						onPeer={setPeer}
-						disabled={running}
-						manual={manual}
-						onAdd={add}
-						onRemove={remove}
-					/>
-				</Disclosure>
+			<Modal
+				title='Add a PC'
+				open={showAddPc}
+				onClose={() => setShowAddPc(false)}
+			>
+				<Advanced
+					port={port}
+					peer={peer}
+					onPort={setPort}
+					onPeer={setPeer}
+					disabled={running}
+					manual={manual}
+					onAdd={add}
+					onRemove={remove}
+				/>
+			</Modal>
 
-				<Disclosure label='Diagnostics'>
-					<Diagnostics stats={stats} running={running} />
-				</Disclosure>
-			</div>
-		</main>
+			<Modal
+				title='Settings'
+				open={showSettings}
+				onClose={() => setShowSettings(false)}
+			>
+				<Diagnostics stats={stats} running={running} />
+			</Modal>
+		</div>
 	);
 };
 

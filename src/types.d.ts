@@ -109,15 +109,6 @@ type DiagnosticsProps = {
 	running: boolean;
 };
 
-type DisclosureProps = {
-	label: string;
-	children: React.ReactNode;
-	/// Driven from outside when a shortcut opens the panel; uncontrolled
-	/// otherwise, so a plain disclosure stays a plain disclosure.
-	open?: boolean;
-	onOpenChange?: (open: boolean) => void;
-};
-
 type ShortcutInfo = {
 	label: string;
 	keys: string;
@@ -127,6 +118,15 @@ type ShortcutInfo = {
 };
 
 type ShortcutsProps = { shortcuts: ShortcutInfo[] };
+
+type NavProps = {
+	me: string;
+	running: boolean;
+	onToggle: () => void;
+	onAddPc: () => void;
+	onShortcuts: () => void;
+	onSettings: () => void;
+};
 
 type ModalProps = {
 	title: string;
