@@ -48,8 +48,22 @@ impl Session {
 
     /// Empty when discovery could not start — which is a normal state on a
     /// network that filters mDNS, not a failure of the session.
+    ///
+    /// mDNS decides *who exists*; the socket decides *who is present*. Those
+    /// are different questions and only one of them can be answered honestly by
+    /// an announcement: a machine that has been switched off keeps looking
+    /// discovered for a while, and a roster claiming somebody can hear you when
+    /// they cannot is worse than no roster at all.
     pub fn peers(&self) -> Vec<discovery::Peer> {
-        self.discovery.as_ref().map(|d| d.peers()).unwrap_or_default()
+        let mut peers = self
+            .discovery
+            .as_ref()
+            .map(|d| d.peers())
+            .unwrap_or_default();
+        for p in &mut peers {
+            p.live = self.net.heard_within(p.addr, net::HEARD_TIMEOUT);
+        }
+        peers
     }
 }
 

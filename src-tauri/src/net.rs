@@ -8,8 +8,11 @@
 //! is the socket, the ports, the firewall, and that a structured header
 //! survives the trip with its sequence intact.
 
+use std::collections::HashMap;
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 use std::sync::mpsc::SyncSender;
+use std::sync::Mutex;
+use std::time::Instant;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -22,7 +25,15 @@ use serde::Serialize;
 /// packets from being decoded as noise by this one.
 pub const VER: u8 = 1;
 pub const KIND_AUDIO: u8 = 0;
+pub const KIND_HEARTBEAT: u8 = 2;
 pub const HEADER_LEN: usize = 8;
+
+/// How often to say we are still here. Frequent enough that going quiet is
+/// noticed while you are still looking at the screen, rare enough to be free.
+const HEARTBEAT_EVERY: Duration = Duration::from_secs(2);
+/// Silence longer than this and a peer is treated as gone. Three missed
+/// heartbeats, so one dropped datagram never greys anybody out.
+pub const HEARD_TIMEOUT: Duration = Duration::from_secs(7);
 
 /// ```text
 ///  0        1        2                 4                              8
@@ -105,6 +116,13 @@ pub struct Handle {
     /// because sends are now driven by the encoder, not by a timer.
     seq: AtomicU64,
     ts: AtomicU64,
+    /// When each address was last heard from — the evidence behind presence.
+    ///
+    /// This is what makes "live" an observation rather than an assumption.
+    /// mDNS only ever says a machine *announced itself*, which stays true for a
+    /// while after it is switched off, and a roster that claims someone can
+    /// hear you when they cannot is worse than no roster at all.
+    heard: Arc<Mutex<HashMap<SocketAddr, Instant>>>,
 }
 
 impl Drop for Handle {
@@ -137,6 +155,18 @@ impl Handle {
             }
             Err(e) => eprintln!("[net] tx failed: {e}"),
         }
+    }
+
+    /// Whether this address has been heard from recently enough to count as
+    /// present. Computed at read time from the last-heard stamp, so it cannot
+    /// be stale between polls the way a swept flag can.
+    pub fn heard_within(&self, addr: SocketAddr, within: Duration) -> bool {
+        let map = match self.heard.lock() {
+            Ok(m) => m,
+            Err(e) => e.into_inner(),
+        };
+        map.get(&addr)
+            .is_some_and(|t| t.elapsed() < within)
     }
 
     pub fn stats(&self) -> Stats {
@@ -286,8 +316,40 @@ pub fn start(port: u16, peer: &str, audio_in: SyncSender<Option<Vec<u8>>>) -> Re
     // rather than a timer that would have to be kept in step with it.
     let tx_sock = socket.try_clone().context("cloning socket for sender")?;
 
+    let heard: Arc<Mutex<HashMap<SocketAddr, Instant>>> = Arc::new(Mutex::new(HashMap::new()));
+
+    // Say we are still here, whether or not anyone is talking. Without this a
+    // silent peer is indistinguishable from a switched-off one, which is the
+    // gap v1 never closed: it could report that somebody was there, never that
+    // they were not.
+    let hb_sock = socket.try_clone().context("cloning socket for heartbeat")?;
+    let hb_stop = stop.clone();
+    thread::Builder::new()
+        .name("net-heartbeat".into())
+        .spawn(move || {
+            // Its own sequence space, fixed at zero: heartbeats must not
+            // advance the audio sequence, or the receiver's reorder window
+            // would see gaps that never existed.
+            let mut buf = [0u8; HEADER_LEN];
+            Header {
+                ver: VER,
+                kind: KIND_HEARTBEAT,
+                seq: 0,
+                ts: 0,
+            }
+            .write(&mut buf);
+
+            while !hb_stop.load(Ordering::Relaxed) {
+                if let Err(e) = hb_sock.send_to(&buf, dest) {
+                    eprintln!("[net] heartbeat failed: {e}");
+                }
+                thread::sleep(HEARTBEAT_EVERY);
+            }
+        })?;
+
     let rx_stop = stop.clone();
     let rx_counters = counters.clone();
+    let rx_heard = heard.clone();
     thread::Builder::new().name("net-rx".into()).spawn(move || {
         let mut buf = [0u8; 2048];
         let mut expect: Option<u16> = None;
@@ -295,8 +357,8 @@ pub fn start(port: u16, peer: &str, audio_in: SyncSender<Option<Vec<u8>>>) -> Re
         let mut ready: Vec<Option<Vec<u8>>> = Vec::with_capacity(SLOTS);
 
         while !rx_stop.load(Ordering::Relaxed) {
-            let len = match socket.recv_from(&mut buf) {
-                Ok((len, _from)) => len,
+            let (len, from) = match socket.recv_from(&mut buf) {
+                Ok(v) => v,
                 // Timeouts are how this loop breathes; they are not errors.
                 Err(_) => continue,
             };
@@ -306,19 +368,35 @@ pub fn start(port: u16, peer: &str, audio_in: SyncSender<Option<Vec<u8>>>) -> Re
                 continue;
             };
 
-            if let Some(want) = expect {
-                // seq is u16 and wraps every ~22 minutes of talking at 50
-                // packets a second, so this is wrapping_sub and not `>`. A
-                // plain comparison stalls permanently at the wrap.
-                let ahead = h.seq.wrapping_sub(want);
-                if ahead > 0 && ahead < 0x8000 {
-                    rx_counters.lost.fetch_add(ahead as u64, Ordering::Relaxed);
-                }
+            // Anything well-formed counts as a sign of life, not just
+            // heartbeats — somebody mid-sentence is obviously present, and
+            // waiting for their next heartbeat to say so would be silly.
+            {
+                let mut map = match rx_heard.lock() {
+                    Ok(m) => m,
+                    Err(e) => e.into_inner(),
+                };
+                map.insert(from, Instant::now());
             }
-            expect = Some(h.seq.wrapping_add(1));
 
             rx_counters.rx.fetch_add(1, Ordering::Relaxed);
-            rx_counters.last_seq.store(h.seq as u64, Ordering::Relaxed);
+
+            // Loss is counted on audio alone. Heartbeats carry their own fixed
+            // sequence, and mixing the two streams into one counter would
+            // report gaps that never existed.
+            if h.kind == KIND_AUDIO {
+                if let Some(want) = expect {
+                    // seq is u16 and wraps every ~22 minutes of talking at 50
+                    // packets a second, so this is wrapping_sub and not `>`. A
+                    // plain comparison stalls permanently at the wrap.
+                    let ahead = h.seq.wrapping_sub(want);
+                    if ahead > 0 && ahead < 0x8000 {
+                        rx_counters.lost.fetch_add(ahead as u64, Ordering::Relaxed);
+                    }
+                }
+                expect = Some(h.seq.wrapping_add(1));
+                rx_counters.last_seq.store(h.seq as u64, Ordering::Relaxed);
+            }
 
             if h.kind == KIND_AUDIO && len > HEADER_LEN {
                 ready.clear();
@@ -342,5 +420,6 @@ pub fn start(port: u16, peer: &str, audio_in: SyncSender<Option<Vec<u8>>>) -> Re
         dest,
         seq: AtomicU64::new(0),
         ts: AtomicU64::new(0),
+        heard,
     })
 }
