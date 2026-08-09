@@ -260,7 +260,26 @@ pub fn run() {
     let ptt_for_handler = ptt.clone();
     let bindings_for_handler = bindings.clone();
 
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+
+    // One instance, unless a port was given on the command line.
+    //
+    // Closing the window hides to the tray, so a running app is invisible — and
+    // every later launch would take a second copy that cannot bind the port or
+    // claim the hotkeys, and would look simply broken. v1 hit this too: two
+    // copies of the listener were the cause of its reported echo, and a mutex
+    // was the fix there as this is here.
+    //
+    // The override is the exception on purpose. Running two deliberately, for
+    // testing, is the one time a second instance is wanted.
+    if config::port_override().is_none() {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            eprintln!("[app] already running — showing the existing window");
+            reveal(app);
+        }));
+    }
+
+    builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(
