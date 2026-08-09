@@ -120,17 +120,17 @@ playback ← ring B ← mixer ◄── per-peer decoders ◄── net rx
 Sequenced so the riskiest thing is proven first, and every slice runs and shows
 something before the next one starts.
 
-> ### ▶ Next: **4 — push-to-talk**
+> ### ▶ Next: **5 — text and notifications**
 >
-> Every microphone is currently open all the time, and everyone sends
-> continuously. Push-to-talk closes that: a global shortcut, nothing sent unless
-> the key is held, and local playback muted while transmitting.
+> `kind=1` UTF-8 messages on the socket that already exists, native
+> notifications, and a message log. Then preset messages on a key (#15), which
+> is what "auto message" turned out to mean.
 >
-> **That mute is the whole echo strategy** — the reason full duplex and acoustic
-> echo cancellation were rejected at the start. It is also what makes the app
-> usable with speakers instead of a headset.
+> Voice and text stay separate as actions and as code paths — in v1 one keypress
+> did both, and that coupling is exactly what made a failure unreadable.
 >
-> Then the full shortcut set (#13), and peers added by hand (#12) closes step 3.
+> Still open from earlier steps, neither blocking: peers added by hand (#12) and
+> the rest of the shortcut set (#13).
 
 | Step | | |
 |---|---|---|
@@ -138,8 +138,8 @@ something before the next one starts.
 | 1 | Audio loopback in-process | ✅ done |
 | 2 | Transport | ✅ done |
 | 3 | Discovery and presence | ✅ done (manual peers #12 outstanding) |
-| 4 | Push-to-talk | ☐ **next** |
-| 5 | Text and notifications | ☐ |
+| 4 | Push-to-talk | ✅ done (shortcut set #13 outstanding) |
+| 5 | Text and notifications | ☐ **next** |
 | 6 | Packaging | ☐ |
 
 ### 0. Skeleton ✅
@@ -197,9 +197,17 @@ This is the thing the old version could never do, and it removes most of the
 
 ### 4. Push-to-talk
 
-- [ ] **4a** Global shortcut; nothing is sent unless the key is held.
-- [ ] **4b** Talking flag in the header; the UI shows who is talking.
-- [ ] **4c** Mute local playback while transmitting.
+- [x] **4a** F8 held is the only thing that sends. Registered globally in Rust
+      so it works unfocused; a failed registration is reported rather than
+      discarded, because a shortcut that loses a race to another application
+      does nothing and says nothing.
+- [x] **4b** The UI shows who is talking, with **no flag in the header**. Audio
+      is only sent while a key is held, so audio arriving *is* the fact that
+      somebody is speaking — and a flag could have disagreed with whether
+      packets were actually turning up.
+- [x] **4c** Local playback silenced while transmitting. **This is the whole
+      echo strategy.** Capture keeps draining its ring while the key is up, or
+      the first thing anyone heard on pressing it would be stale room noise.
 - [ ] The full shortcut set — no per-person keys (#13).
 
 *Done when:* hold to talk, release to listen, no feedback with speakers on.
