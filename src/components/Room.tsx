@@ -22,6 +22,17 @@ export const Room = ({
 	const [shown, setShown] = useState(false);
 	const [copied, setCopied] = useState(false);
 
+	/// Enter used to be the only way to commit this, which meant pasting a
+	/// passphrase and clicking away did nothing — and looked exactly like the
+	/// app refusing to save it. A field that acts on a key nobody was told about
+	/// is a field with no visible way to work.
+	const join = () => {
+		const next = draft.trim();
+		if (!next) return;
+		setDraft('');
+		onJoin(next);
+	};
+
 	const copy = async () => {
 		try {
 			await navigator.clipboard.writeText(passphrase);
@@ -56,15 +67,18 @@ export const Room = ({
 					<input
 						value={draft}
 						onChange={e => setDraft(e.currentTarget.value)}
-						onKeyDown={e => {
-							if (e.key === 'Enter' && draft.trim()) {
-								onJoin(draft.trim());
-								setDraft('');
-							}
-						}}
+						onKeyDown={e => e.key === 'Enter' && join()}
 						placeholder='or paste the one from another PC'
 						className='min-w-0 flex-1 rounded-lg border border-line bg-surface px-3 py-1.5 font-mono text-xs outline-none focus:border-accent'
 					/>
+					<button
+						type='button'
+						onClick={join}
+						disabled={!draft.trim()}
+						className='shrink-0 rounded-lg border border-line px-3 py-1.5 text-sm text-muted transition hover:border-accent hover:text-ink disabled:opacity-40'
+					>
+						Join
+					</button>
 				</div>
 			</div>
 		);
@@ -110,15 +124,18 @@ export const Room = ({
 				<input
 					value={draft}
 					onChange={e => setDraft(e.currentTarget.value)}
-					onKeyDown={e => {
-						if (e.key === 'Enter' && draft.trim()) {
-							onJoin(draft.trim());
-							setDraft('');
-						}
-					}}
+					onKeyDown={e => e.key === 'Enter' && join()}
 					placeholder='paste a different passphrase to switch rooms'
 					className='min-w-0 flex-1 rounded-lg border border-line bg-surface px-3 py-1.5 font-mono text-xs outline-none focus:border-accent'
 				/>
+				<button
+					type='button'
+					onClick={join}
+					disabled={!draft.trim()}
+					className='shrink-0 rounded-lg border border-line px-3 py-1.5 text-xs text-muted transition hover:border-accent hover:text-ink disabled:opacity-40'
+				>
+					Join
+				</button>
 				{/* Leaving is destructive in a quiet way — everything goes back
 				    to travelling in the clear — so it is not the loud button. */}
 				<button
