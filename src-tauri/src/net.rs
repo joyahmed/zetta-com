@@ -9,6 +9,7 @@
 //! survives the trip with its sequence intact.
 
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
+use std::sync::mpsc::SyncSender;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -98,6 +99,12 @@ pub struct Handle {
     counters: Arc<Counters>,
     port: u16,
     peer: String,
+    socket: UdpSocket,
+    dest: SocketAddr,
+    /// Sequence and timestamp live here rather than in the sender thread
+    /// because sends are now driven by the encoder, not by a timer.
+    seq: AtomicU64,
+    ts: AtomicU64,
 }
 
 impl Drop for Handle {
@@ -107,6 +114,31 @@ impl Drop for Handle {
 }
 
 impl Handle {
+    /// Send one encoded audio frame. `samples` is the sender's frame size, so
+    /// the timestamp advances by what this machine actually captured rather
+    /// than by a constant the receiver would have to guess at.
+    pub fn send_audio(&self, data: &[u8], samples: u32) {
+        let mut buf = [0u8; HEADER_LEN + MAX_PAYLOAD];
+        if data.len() > MAX_PAYLOAD {
+            return;
+        }
+        let h = Header {
+            ver: VER,
+            kind: KIND_AUDIO,
+            seq: self.seq.fetch_add(1, Ordering::Relaxed) as u16,
+            ts: self.ts.fetch_add(samples as u64, Ordering::Relaxed) as u32,
+        };
+        h.write(&mut buf);
+        buf[HEADER_LEN..HEADER_LEN + data.len()].copy_from_slice(data);
+
+        match self.socket.send_to(&buf[..HEADER_LEN + data.len()], self.dest) {
+            Ok(_) => {
+                self.counters.tx.fetch_add(1, Ordering::Relaxed);
+            }
+            Err(e) => eprintln!("[net] tx failed: {e}"),
+        }
+    }
+
     pub fn stats(&self) -> Stats {
         Stats {
             port: self.port,
@@ -132,7 +164,11 @@ fn resolve_v4(peer: &str) -> Result<SocketAddr> {
         .ok_or_else(|| anyhow!("{peer} resolves to no IPv4 address"))
 }
 
-pub fn start(port: u16, peer: &str) -> Result<Handle> {
+/// A 20 ms Opus frame is 80-120 bytes; this is generous slack and keeps the
+/// send buffer on the stack.
+const MAX_PAYLOAD: usize = 1400;
+
+pub fn start(port: u16, peer: &str, audio_in: SyncSender<Vec<u8>>) -> Result<Handle> {
     let dest = resolve_v4(peer)?;
 
     // 0.0.0.0 written out on purpose. An empty host binds IPv6-only on Windows
@@ -152,38 +188,10 @@ pub fn start(port: u16, peer: &str) -> Result<Handle> {
     let stop = Arc::new(AtomicBool::new(false));
     let counters = Arc::new(Counters::default());
 
+    // There is no sender thread any more. Sends are driven by the encoder
+    // through Handle::send_audio, so the microphone sets the packet rate
+    // rather than a timer that would have to be kept in step with it.
     let tx_sock = socket.try_clone().context("cloning socket for sender")?;
-    let tx_stop = stop.clone();
-    let tx_counters = counters.clone();
-    thread::Builder::new().name("net-tx".into()).spawn(move || {
-        let mut buf = [0u8; 64];
-        let mut seq: u16 = 0;
-        let mut ts: u32 = 0;
-        while !tx_stop.load(Ordering::Relaxed) {
-            let h = Header {
-                ver: VER,
-                kind: KIND_AUDIO,
-                seq,
-                ts,
-            };
-            h.write(&mut buf);
-            buf[HEADER_LEN..HEADER_LEN + 2].copy_from_slice(b"hi");
-
-            match tx_sock.send_to(&buf[..HEADER_LEN + 2], dest) {
-                Ok(_) => {
-                    tx_counters.tx.fetch_add(1, Ordering::Relaxed);
-                }
-                Err(e) => eprintln!("[net] tx failed: {e}"),
-            }
-
-            seq = seq.wrapping_add(1);
-            // Placeholder. Becomes the sender's real frame size once audio
-            // rides on this, which is rate/50 and may be 320, not 960 — the
-            // receiver must never assume it.
-            ts = ts.wrapping_add(960);
-            thread::sleep(Duration::from_millis(200));
-        }
-    })?;
 
     let rx_stop = stop.clone();
     let rx_counters = counters.clone();
@@ -216,6 +224,13 @@ pub fn start(port: u16, peer: &str) -> Result<Handle> {
 
             rx_counters.rx.fetch_add(1, Ordering::Relaxed);
             rx_counters.last_seq.store(h.seq as u64, Ordering::Relaxed);
+
+            if h.kind == KIND_AUDIO && len > HEADER_LEN {
+                // try_send: if the decoder is behind, dropping the newest frame
+                // is better than growing a queue of speech nobody will want by
+                // the time it plays.
+                let _ = audio_in.try_send(buf[HEADER_LEN..len].to_vec());
+            }
         }
     })?;
 
@@ -224,5 +239,9 @@ pub fn start(port: u16, peer: &str) -> Result<Handle> {
         counters,
         port,
         peer: peer.to_string(),
+        socket: tx_sock,
+        dest,
+        seq: AtomicU64::new(0),
+        ts: AtomicU64::new(0),
     })
 }

@@ -11,7 +11,8 @@
 //! lock and is audible as a crackle.
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -82,32 +83,67 @@ struct Stats {
     b_occ: AtomicU64,
 }
 
-pub fn start() -> Result<Handle> {
+/// One encoded 20 ms frame, carrying the sample count it represents. The count
+/// travels with the frame because the packet header's timestamp advances by the
+/// *sender's* frame size, and that depends on the sender's microphone rate —
+/// 320 on a 16 kHz headset, 960 at 48 kHz. The receiver must never assume it.
+pub struct Frame {
+    pub data: Vec<u8>,
+    pub samples: u32,
+}
+
+/// Audio with both ends exposed: frames leaving the microphone, and frames
+/// arriving to be played. `net` drains one and fills the other, and neither
+/// module knows the other exists.
+pub struct Pipeline {
+    pub frames_out: Receiver<Frame>,
+    pub frames_in: SyncSender<Vec<u8>>,
+    pub handle: Handle,
+}
+
+pub fn start() -> Result<Pipeline> {
     let stop = Arc::new(AtomicBool::new(false));
-    let (tx, rx) = mpsc::channel::<Result<()>>();
+    let (ready_tx, ready_rx) = mpsc::channel::<Result<()>>();
+
+    // Bounded on purpose. If the network side stalls, dropping speech is the
+    // correct response and an unbounded queue is not: audio that arrives late
+    // enough is worth less than the memory holding it.
+    let (out_tx, out_rx) = mpsc::sync_channel::<Frame>(8);
+    let (in_tx, in_rx) = mpsc::sync_channel::<Vec<u8>>(16);
 
     let thread_stop = stop.clone();
     thread::Builder::new()
         .name("audio".into())
-        .spawn(move || match build(&thread_stop) {
+        .spawn(move || match build(&thread_stop, out_tx, in_rx) {
             Ok(streams) => {
-                let _ = tx.send(Ok(()));
+                let _ = ready_tx.send(Ok(()));
                 while !thread_stop.load(Ordering::Relaxed) {
                     thread::sleep(Duration::from_millis(50));
                 }
                 drop(streams);
             }
             Err(e) => {
-                let _ = tx.send(Err(e));
+                let _ = ready_tx.send(Err(e));
             }
         })?;
 
     // Two `?`: one for the channel dying, one for the build failing.
-    rx.recv().context("audio thread died before reporting")??;
-    Ok(Handle { stop })
+    ready_rx
+        .recv()
+        .context("audio thread died before reporting")??;
+
+    Ok(Pipeline {
+        frames_out: out_rx,
+        frames_in: in_tx,
+        handle: Handle { stop },
+    })
 }
 
-fn build(stop: &Arc<AtomicBool>) -> Result<Streams> {
+fn build(
+    stop: &Arc<AtomicBool>,
+    out_tx: SyncSender<Frame>,
+    in_rx: Receiver<Vec<u8>>,
+) -> Result<Streams> {
     let host = cpal::default_host();
     let input = host
         .default_input_device()
@@ -280,9 +316,13 @@ fn build(stop: &Arc<AtomicBool>) -> Result<Streams> {
         f => return Err(anyhow!("unsupported output sample format {f:?}")),
     };
 
-    let codec_stop = stop.clone();
-    let codec_stats = stats.clone();
-    thread::Builder::new().name("codec".into()).spawn(move || {
+    // Encoder and decoder are separate threads now, not one codec loop. They
+    // used to be joined only because the output of one fed the input of the
+    // other; with the socket in between they are independent, and a peer who
+    // stops talking must not stall the microphone.
+    let enc_stop = stop.clone();
+    let enc_stats = stats.clone();
+    thread::Builder::new().name("encoder".into()).spawn(move || {
         let mut enc = match Encoder::new(enc_rate, Channels::Mono, Application::Voip) {
             Ok(e) => e,
             Err(e) => return eprintln!("[audio] encoder: {e}"),
@@ -290,25 +330,19 @@ fn build(stop: &Arc<AtomicBool>) -> Result<Streams> {
         if let Err(e) = enc.set_bitrate(Bitrate::BitsPerSecond(BITRATE)) {
             eprintln!("[audio] set_bitrate: {e}");
         }
-        let mut dec = match Decoder::new(dec_rate, Channels::Mono) {
-            Ok(d) => d,
-            Err(e) => return eprintln!("[audio] decoder: {e}"),
-        };
 
         // Sized for the worst case, sliced to the real frame. Allocated once,
         // outside the loop, so the loop itself never allocates.
         let mut pcm = [0i16; MAX_FRAME];
         let mut packet = [0u8; MAX_PACKET];
-        let mut out = [0i16; MAX_FRAME];
 
-        while !codec_stop.load(Ordering::Relaxed) {
+        while !enc_stop.load(Ordering::Relaxed) {
             let have = cons_a.occupied_len();
-            codec_stats.a_occ.store(have as u64, Ordering::Relaxed);
+            enc_stats.a_occ.store(have as u64, Ordering::Relaxed);
             if have < in_frame {
                 thread::sleep(Duration::from_millis(2));
                 continue;
             }
-            codec_stats.frames.fetch_add(1, Ordering::Relaxed);
             cons_a.pop_slice(&mut pcm[..in_frame]);
 
             let n = match enc.encode(&pcm[..in_frame], &mut packet) {
@@ -318,9 +352,39 @@ fn build(stop: &Arc<AtomicBool>) -> Result<Streams> {
                     continue;
                 }
             };
-            // Decoding to `out_frame` rather than `in_frame` is what converts
-            // the rate: libopus resamples internally, so nothing here does.
-            let got = match dec.decode(Some(&packet[..n]), &mut out[..out_frame], false) {
+            enc_stats.frames.fetch_add(1, Ordering::Relaxed);
+
+            // try_send, not send: a full channel means the network side has
+            // stalled, and blocking here would back the stall up into the
+            // capture ring and then into dropped microphone samples.
+            let _ = out_tx.try_send(Frame {
+                data: packet[..n].to_vec(),
+                samples: in_frame as u32,
+            });
+        }
+    })?;
+
+    let dec_stop = stop.clone();
+    thread::Builder::new().name("decoder".into()).spawn(move || {
+        let mut dec = match Decoder::new(dec_rate, Channels::Mono) {
+            Ok(d) => d,
+            Err(e) => return eprintln!("[audio] decoder: {e}"),
+        };
+        let mut out = [0i16; MAX_FRAME];
+
+        while !dec_stop.load(Ordering::Relaxed) {
+            // Timed out rather than blocking, so the thread notices the stop
+            // flag instead of parking forever on a silent peer.
+            let frame = match in_rx.recv_timeout(Duration::from_millis(200)) {
+                Ok(f) => f,
+                Err(RecvTimeoutError::Timeout) => continue,
+                Err(RecvTimeoutError::Disconnected) => break,
+            };
+
+            // Decoding to `out_frame` rather than the sender's frame size is
+            // what converts the rate: libopus resamples internally, so nothing
+            // here has to, and the two machines need not agree on a rate.
+            let got = match dec.decode(Some(&frame[..]), &mut out[..out_frame], false) {
                 Ok(n) => n,
                 Err(e) => {
                     eprintln!("[audio] decode: {e}");

@@ -1,5 +1,6 @@
 mod audio;
 mod net;
+mod session;
 
 use std::sync::Mutex;
 
@@ -15,9 +16,9 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
-/// The running transport, or nothing. `net::Handle` stops on drop, so setting
-/// this to `None` is the whole of `net_stop`.
-struct NetState(Mutex<Option<net::Handle>>);
+/// The running session, or nothing. `session::Session` stops audio and the
+/// socket on drop, so setting this to `None` is the whole of `net_stop`.
+struct NetState(Mutex<Option<session::Session>>);
 
 /// Commands return `Result<_, String>` rather than `anyhow::Result` because
 /// anyhow's error type is not serialisable across the IPC boundary. The
@@ -28,7 +29,7 @@ fn net_start(state: State<NetState>, port: u16, peer: String) -> Result<(), Stri
     // Drop any existing transport before binding, or starting on the same port
     // fails with "address already in use" against ourselves.
     *guard = None;
-    *guard = Some(net::start(port, &peer).map_err(|e| format!("{e:#}"))?);
+    *guard = Some(session::start(port, &peer).map_err(|e| format!("{e:#}"))?);
     Ok(())
 }
 
@@ -86,15 +87,13 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            match audio::start() {
-                Ok(handle) => {
-                    app.manage(handle);
-                }
-                Err(e) => eprintln!("[audio] failed to start: {e:#}"),
-            }
-
-            // The transport is started from the UI, not from here. Deliberately
-            // no environment-variable fallback: two ways to configure one thing
+            // Audio no longer starts here. It starts and stops with the
+            // session, because opening the microphone is not something an app
+            // should do at launch and then hold forever — and because with the
+            // loopback cut, audio with no transport has nowhere to go.
+            //
+            // The transport is started from the UI, deliberately with no
+            // environment-variable fallback: two ways to configure one thing
             // guarantees an afternoon spent on "why is it using the other port".
             app.manage(NetState(Mutex::new(None)));
 
