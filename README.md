@@ -1,49 +1,102 @@
 # Zetta Com
 
-A LAN intercom. Hold a key, and the people you choose hear you — one person or
-the whole room. No internet, no accounts, no server.
+**A LAN intercom.** Hold a key, and the people you choose hear you — one person
+or the whole room.
 
-Built for directing a team: pick a machine, hold a key, talk. Or type, and it
-arrives as a notification on their screen.
+No internet. No accounts. No server. No configuration. Start it on two machines
+on the same network and they find each other; hold `F8` and talk. Your voice
+goes straight from your machine to theirs and touches nothing else on the way.
+
+<p align="center">
+  <img src="docs/screenshots/home.png" alt="The main window: a talk bar, a row of PCs to aim at, and the message log" width="330">
+  <img src="docs/screenshots/talking.png" alt="The same window with F8 held — the talk bar filled, reading Talking to everyone" width="330">
+</p>
+
+<p align="center"><em>Idle, and with <code>F8</code> held.</em></p>
+
+---
+
+## Why this and not something else
+
+Every other way of doing this asks for something Zetta Com does not.
+
+| | |
+|---|---|
+| **Discord, Teams, Slack huddles** | Accounts, an internet connection, and a round trip through somebody else's datacentre to reach the desk next to you. They stop working the moment the line does. |
+| **Walkie-talkies** | Hardware to buy, charge, and lose. In some bands, licensing. And nothing on a screen telling you who is actually listening. |
+| **A phone call** | One person, and they have to answer. |
+
+Zetta Com is a 3 MB installer that needs a network cable and nothing else. It
+runs on an air-gapped network. It runs in a workshop, a warehouse, a studio, a
+site office — anywhere there is a LAN and people who need to reach each other
+faster than walking.
+
+Two things it does that most of the alternatives cannot:
+
+- **It reports absence.** A heartbeat every two seconds means the roster greys
+  somebody out within seven of their machine going quiet. Knowing that nobody is
+  listening is worth more than knowing that somebody might be.
+- **It works while you are working.** The shortcuts are global. You do not
+  alt-tab, you do not click into a window, you do not find a tab. You hold a key
+  in whatever you were already doing and start talking.
 
 ---
 
 ## What it does
 
-- **Push to talk.** Hold **F8** and whoever is selected hears you. Nothing is
-  transmitted unless the key is held.
-- **Talk to one person or everyone.** `Ctrl+Alt+1…9` talks to the PC in that
-  row; `Ctrl+Alt+0` talks to the room.
-- **Messages.** Type, or fire a preset with a key. They arrive as native
-  notifications when the window is hidden.
-- **Finds everyone by itself.** mDNS discovery — no addresses to type on a
-  normal network. Machines that discovery cannot reach can be added manually.
-- **Says who is actually there.** A heartbeat every two seconds; somebody who
-  goes quiet greys out within seven. It reports absence, not just presence.
-- **Names you choose.** `DEVS002` is not Rafi. Rename any machine, correct an
-  address you typed wrong, or remove it — all in one list.
+| | |
+|---|---|
+| **Push to talk** | Hold `F8` and whoever is selected hears you. Nothing is transmitted unless the key is held. |
+| **One person or everyone** | `Ctrl+1…9` talks to a specific PC, `Ctrl+0` to the room. |
+| **Messages** | Type, or fire a preset with a key. They arrive as native notifications when the window is hidden. |
+| **Finds everyone by itself** | mDNS discovery — no addresses to type on a normal network. |
+| **Reports absence** | A heartbeat every two seconds; somebody who goes quiet greys out within seven. It says who is *not* there, not just who is. |
+| **Names you choose** | `DEVS002` is not Rafi. Name a machine when you add it, or rename, correct or remove it later. |
 
-## Getting it
+---
 
-Grab an installer from [releases](../../releases), or build it yourself.
+## Install
 
-**On macOS, the first launch will say the app is "damaged."** It is not. The
-builds are unsigned, and Gatekeeper refuses a quarantined bundle that carries no
-signature. Move it to `/Applications`, then clear the quarantine flag:
+Grab an installer from [**releases**](../../releases).
 
-```bash
-xattr -cr "/Applications/Zetta Com.app"
-```
+### Windows
 
-You will need this again after every new download, until the builds are signed.
+Run `Zetta Com_x.y.z_x64-setup.exe`. It asks for administrator, because it adds
+a firewall rule for you — see [Firewall](#firewall) for what and why.
 
-**Then open System Settings → Privacy & Security → Local Network and turn Zetta
-Com on.** macOS normally asks for local network access the first time an app
-wants it, but clearing quarantine can mean the prompt never appears — and
-without that permission the app looks like it is running perfectly while hearing
-nobody at all.
+### macOS
 
-Building it yourself:
+**Apple silicon only.** The Intel build was dropped because GitHub is retiring
+the Intel macOS runner and the job stopped being scheduled at all — it sat
+queued indefinitely and held every release open behind it. On an Intel Mac,
+build it yourself.
+
+> [!IMPORTANT]
+> **macOS will say the app is "damaged". It is not.** The builds are unsigned,
+> and Gatekeeper refuses a quarantined bundle that carries no signature.
+>
+> Move the app to `/Applications`, then clear the quarantine flag:
+>
+> ```bash
+> xattr -cr "/Applications/Zetta Com.app"
+> ```
+>
+> You need this again after **every** new download, until the builds are signed.
+
+> [!WARNING]
+> **Then turn on local network access**, in
+> **System Settings → Privacy & Security → Local Network**.
+>
+> macOS normally asks for this the first time an app wants it — but clearing
+> quarantine can mean the prompt never appears. Without the permission the app
+> looks like it is running perfectly while hearing nobody at all, and nothing
+> anywhere reports an error.
+
+### Linux
+
+`.deb` or `.AppImage`. Needs `libasound2-dev` at build time only.
+
+### Build it yourself
 
 ```bash
 bun install
@@ -54,34 +107,96 @@ Artifacts land in `src-tauri/target/release/bundle/` — MSI and NSIS on Windows
 `.deb` and `.AppImage` on Linux, `.dmg` on macOS. Each platform builds only its
 own; the [release workflow](.github/workflows/release.yml) does all of them.
 
-**Building on Windows also needs** [CMake](https://cmake.org/download/), which
-libopus is compiled with. On Linux, `libasound2-dev` for ALSA.
+> [!NOTE]
+> Building on **Windows** also needs [CMake](https://cmake.org/download/), which
+> libopus is compiled with. On **Linux**, `libasound2-dev` for ALSA.
 
-## Using it
+---
 
-It starts with the machine and lives in the tray — closing the window hides it,
-because an intercom that stops receiving when you tidy your desktop is not an
-intercom. **Quit** is in the tray menu.
+## Shortcuts
 
 | Key | |
 |---|---|
 | `F8` (hold) | talk to whoever is selected |
-| `Ctrl+Alt+1…9` (hold) | talk to that PC |
-| `Ctrl+Alt+0` (hold) | talk to everyone |
+| `Ctrl+1…9` (hold) | talk to that PC |
+| `Ctrl+0` (hold) | talk to everyone |
 | `Ctrl+Shift+1…9` | message that PC |
 | `Ctrl+Shift+0` | message everyone |
-| `Ctrl+Alt+S` | start or stop |
-| `Ctrl+Alt+A` | add a PC |
-| `Ctrl+Alt+T` | open the window |
-| `Ctrl+Alt+K` | show all shortcuts |
+| `F9` | start or stop |
+| `F10` | open the window |
+| `F1` | show all shortcuts |
 
-Every key is listed in the app, **including the ones that failed to register** —
-a global shortcut can lose a race to another application, and when it does the
-key silently does nothing.
+<p align="center">
+  <img src="docs/screenshots/shortcuts.png" alt="The shortcut list, with the nine talk and nine message keys collapsed into one row each" width="330">
+</p>
 
-Windows will ask about the firewall on first start. **Allow it.** If you cancel,
-Windows writes a *block* rule that outranks everything afterwards and leaves no
-visible trace.
+The numbers follow the order PCs appear in the list, so `1…9` are the first
+nine. There is no limit on how many PCs you can add — there is a limit on how
+many number keys exist. For the rest, select one and hold `F8`.
+
+> [!CAUTION]
+> These are **global**. While the app is running it owns `Ctrl+0…9` for every
+> program on the machine — browser and editor tabs included. That is the price
+> of talking to somebody without leaving what you are doing, and it is why the
+> app's own actions sit on function keys instead of taking more of that space.
+
+Every key is listed in the app, **including the ones that failed to register**.
+A global shortcut can lose a race to another application, and when it does the
+key silently does nothing — which is otherwise indistinguishable from the app
+being broken.
+
+---
+
+## Using it
+
+It starts with the machine and lives in the tray. Closing the window hides it,
+because an intercom that stops receiving when you tidy your desktop is not an
+intercom. **Quit** is in the tray menu.
+
+One socket carries everything: audio, text and heartbeats all travel over
+**UDP 9001**, separated by a byte in the header. Discovery is separate, on
+**UDP 5353** (mDNS). The port is a setting; everyone on the network must use the
+same one.
+
+<p align="center">
+  <img src="docs/screenshots/pcs.png" alt="Settings: the port, and every PC with its name, address and shortcut number" width="270">
+  <img src="docs/screenshots/add-pc.png" alt="Adding a PC by address, with an optional name" width="270">
+  <img src="docs/screenshots/diagnostics.png" alt="Diagnostics: packets sent, received, lost and rejected" width="270">
+</p>
+
+Settings holds the port and every PC. A machine discovery cannot reach is added
+by address, and named at the same time. Diagnostics is behind the status line in
+the header — the counters moving or not moving is the whole answer to "is this
+working".
+
+### Firewall
+
+The Windows installer adds an inbound rule for the executable across **all**
+profiles — Domain, Private and Public — so there is no first-start prompt. The
+rule is scoped to the *program*, not to port 9001, which means changing the port
+in Settings needs no firewall change, and mDNS on 5353 is covered by the same
+rule. Uninstalling removes it.
+
+> [!WARNING]
+> If you install from the **MSI**, or run a build straight out of
+> `target/release/bundle`, you get Windows' prompt instead. **Allow it.** If you
+> cancel, Windows writes a *block* rule that outranks everything afterwards and
+> leaves no visible trace.
+
+To repair a cancelled prompt, or add the rule by hand — **as administrator**:
+
+```powershell
+netsh advfirewall firewall delete rule name="Zetta Com"
+netsh advfirewall firewall add rule name="Zetta Com" dir=in action=allow `
+  program="C:\Program Files\Zetta Com\zetta-com.exe" protocol=udp profile=any enable=yes
+```
+
+That administrator requirement is also why the installer is per-machine: adding
+a firewall rule is not something a per-user install is allowed to do, and one
+that tried would fail silently and leave you with the prompt it was meant to
+replace.
+
+---
 
 ## Why it exists
 
@@ -103,6 +218,8 @@ is **not** there, which the old version never could.
 `docs/PLAN.md` carries the decisions and the reasoning, including what was
 rejected and why.
 
+---
+
 ## How it works
 
 ```
@@ -122,14 +239,22 @@ echo path never exists and there is nothing to cancel. Full duplex would have
 meant acoustic echo cancellation, and that becomes the project rather than a
 step in it.
 
+---
+
 ## Security
 
-**There is none.** Anyone on the network can send audio and text to anyone
-running this, and anyone running it hears whatever is sent to its port. There is
-no authentication, no encryption, and no access control.
+> [!CAUTION]
+> **There is none.** Anyone on the network can send audio and text to anyone
+> running this, and anyone running it hears whatever is sent to its port. There
+> is no authentication, no encryption, and no access control.
+>
+> Anyone who can capture packets on the network can reconstruct a conversation.
 
 That is a reasonable trade on a trusted office LAN, which is what it was built
-for. It is not one anywhere else. Do not run it on a network you do not control.
+for. It is not one anywhere else. **Do not run it on a network you do not
+control.**
+
+---
 
 ## Licence
 
