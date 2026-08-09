@@ -45,7 +45,7 @@ type Peer = {
 	talking: boolean;
 };
 
-type TalkBarProps = { held: boolean; key_: string };
+type TalkBarProps = { held: boolean; key_: string; to: string };
 
 type Message = {
 	id: number;
@@ -59,6 +59,7 @@ type Message = {
 };
 
 type MessagesProps = {
+	to: string;
 	messages: Message[];
 	onSend: (text: string) => void;
 	disabled: boolean;
@@ -86,8 +87,9 @@ type PeerRowProps = {
 type RosterProps = {
 	peers: Peer[];
 	running: boolean;
-	selected: string;
-	onSelect: (addr: string) => void;
+	/// The address everything is aimed at, or null for everyone.
+	target: string | null;
+	onTarget: (addr: string | null) => void;
 };
 
 type AdvancedProps = {

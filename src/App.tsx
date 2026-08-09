@@ -10,6 +10,7 @@ import { useLocalName } from './hooks/useLocalName';
 import { useManualPeers } from './hooks/useManualPeers';
 import { useMessages } from './hooks/useMessages';
 import { usePtt } from './hooks/usePtt';
+import { useTarget } from './hooks/useTarget';
 import { useTransport } from './hooks/useTransport';
 
 const App = () => {
@@ -30,6 +31,14 @@ const App = () => {
 	} = useTransport();
 	const { messages, send } = useMessages(running);
 	const { manual, presets, add, remove } = useManualPeers(setError);
+	const { target, setTarget } = useTarget(setError);
+
+	// Named for the talk bar and the message box, so it always says who is
+	// about to be addressed rather than leaving it to be remembered.
+	const targetName =
+		target === null
+			? 'everyone'
+			: (peers.find(p => p.addr === target)?.name ?? target);
 
 	return (
 		<main className='min-h-screen bg-slate-50 px-6 py-8 text-slate-900 dark:bg-slate-950 dark:text-slate-100'>
@@ -58,13 +67,13 @@ const App = () => {
 
 				{error && <Alert message={error} />}
 
-				{running && <TalkBar held={held} key_='F8' />}
+				{running && <TalkBar held={held} key_='F8' to={targetName} />}
 
 				<Roster
 					peers={peers}
 					running={running}
-					selected={peer}
-					onSelect={setPeer}
+					target={target}
+					onTarget={setTarget}
 				/>
 
 				<Presets
@@ -77,6 +86,7 @@ const App = () => {
 					messages={messages}
 					onSend={send}
 					disabled={!running}
+					to={targetName}
 				/>
 
 				<Disclosure label='Advanced'>

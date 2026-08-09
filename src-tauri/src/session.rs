@@ -9,6 +9,7 @@
 //! playback ← ring B ← decoder ◄── frames_in ◄────────── net rx
 //! ```
 
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
 use std::sync::Arc;
@@ -51,6 +52,11 @@ impl Session {
 
     pub fn send_text(&self, text: &str) {
         self.net.send_text(text);
+    }
+
+    /// Aim voice and text at one machine, or at everyone when `None`.
+    pub fn set_target(&self, addr: Option<SocketAddr>) {
+        self.net.set_target(addr);
     }
 
     /// The log, with addresses replaced by names. `net` stores who sent what as

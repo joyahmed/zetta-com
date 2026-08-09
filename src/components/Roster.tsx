@@ -6,17 +6,37 @@ const Empty = ({ children }: { children: React.ReactNode }) => (
 	</p>
 );
 
-export const Roster = ({ peers, running, selected, onSelect }: RosterProps) => {
+/// Who you are addressing, not just who exists.
+///
+/// The roster is the control surface: selecting somebody points voice and text
+/// at that machine alone, and "Everyone" puts it back. That is the difference
+/// between an intercom and a way of telling one person something.
+export const Roster = ({ peers, running, target, onTarget }: RosterProps) => {
 	const live = peers.filter(p => p.live).length;
 
 	return (
 		<section className='flex flex-col gap-2'>
 			<div className='flex items-baseline justify-between'>
-				<h2 className='text-sm font-medium'>On the network</h2>
+				<h2 className='text-sm font-medium'>Send to</h2>
 				<span className='text-xs text-slate-500 dark:text-slate-400'>
 					{running ? `${live} of ${peers.length} live` : 'not looking'}
 				</span>
 			</div>
+
+			<button
+				type='button'
+				onClick={() => onTarget(null)}
+				className={`flex w-full items-center gap-3 rounded-lg border px-3 py-2 text-left font-medium transition ${
+					target === null
+						? 'border-teal-500 bg-teal-50 dark:bg-teal-950/40'
+						: 'border-slate-200 bg-white hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900'
+				}`}
+			>
+				Everyone
+				<span className='ml-auto text-xs font-normal text-slate-500 dark:text-slate-400'>
+					{live} live
+				</span>
+			</button>
 
 			{!running && <Empty>Press Start to look for other PCs.</Empty>}
 
@@ -29,15 +49,12 @@ export const Roster = ({ peers, running, selected, onSelect }: RosterProps) => {
 				</Empty>
 			)}
 
-			{/* Everyone live hears you; there is nobody to pick. The row still
-			    highlights the manual address when one is set, so it is visible
-			    where a hand-typed peer ended up. */}
 			{peers.map(p => (
 				<PeerRow
 					key={p.id}
 					peer={p}
-					selected={selected === p.addr}
-					onSelect={() => onSelect(p.addr)}
+					selected={target === p.addr}
+					onSelect={() => onTarget(p.addr)}
 				/>
 			))}
 		</section>

@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 const time = (ms: number) =>
 	new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-export const Messages = ({ messages, onSend, disabled }: MessagesProps) => {
+export const Messages = ({ messages, onSend, disabled, to }: MessagesProps) => {
 	const [draft, setDraft] = useState('');
 	const end = useRef<HTMLDivElement>(null);
 
@@ -55,7 +55,7 @@ export const Messages = ({ messages, onSend, disabled }: MessagesProps) => {
 					value={draft}
 					onChange={e => setDraft(e.currentTarget.value)}
 					disabled={disabled}
-					placeholder={disabled ? 'Start to send messages' : 'Message everyone'}
+					placeholder={disabled ? 'Start to send messages' : `Message ${to}`}
 					className='flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none transition placeholder:text-slate-400 focus:border-teal-500 focus:ring-2 focus:ring-teal-500/30 disabled:opacity-55 dark:border-slate-700 dark:bg-slate-900'
 				/>
 				<button

@@ -194,6 +194,23 @@ fn send_text(state: State<NetState>, text: String) -> Result<(), String> {
     }
 }
 
+/// Aim voice and text at one machine, or at everyone when `addr` is null.
+///
+/// This is the whole of per-person targeting: every send is already a unicast
+/// to each recipient in turn, so addressing one person is a shorter list rather
+/// than a different protocol.
+#[tauri::command]
+fn set_target(state: State<NetState>, addr: Option<String>) -> Result<(), String> {
+    let parsed = match addr.as_deref().map(str::trim).filter(|a| !a.is_empty()) {
+        Some(a) => Some(net::resolve_v4(a).map_err(|e| format!("{e:#}"))?),
+        None => None,
+    };
+    if let Some(s) = state.0.lock().map_err(|e| e.to_string())?.as_ref() {
+        s.set_target(parsed);
+    }
+    Ok(())
+}
+
 /// The message log, newest last. Polled with everything else.
 #[tauri::command]
 fn messages(state: State<NetState>) -> Result<Vec<net::Message>, String> {
@@ -324,7 +341,7 @@ pub fn run() {
         )
         .invoke_handler(tauri::generate_handler![
             greet, net_start, net_stop, net_stats, net_peers, local_name, config_get,
-            ptt_held, send_text, messages, manual_peers
+            ptt_held, send_text, messages, manual_peers, set_target
         ])
         .setup(move |app| {
             let show = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;

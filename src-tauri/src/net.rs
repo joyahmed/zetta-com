@@ -153,6 +153,14 @@ pub struct Handle {
     /// heard each other would each wait for the other to speak first and
     /// neither ever would.
     targets: Arc<Mutex<Targets>>,
+    /// One recipient, or everyone live when `None`.
+    ///
+    /// Sending to one person needs no field in the header and no change to the
+    /// wire format, because every send is already a unicast to each recipient
+    /// in turn — addressing one is simply a shorter list. What the receiver
+    /// cannot tell from this alone is whether it was addressed personally, and
+    /// that is worth adding when it matters.
+    target: Arc<Mutex<Option<SocketAddr>>>,
     /// When each address was last heard from — the evidence behind presence.
     ///
     /// This is what makes "live" an observation rather than an assumption.
@@ -188,6 +196,43 @@ impl Handle {
         *t = Targets { known, live };
     }
 
+    /// Direct everything at one machine, or at everyone when `None`.
+    pub fn set_target(&self, addr: Option<SocketAddr>) {
+        let mut t = match self.target.lock() {
+            Ok(t) => t,
+            Err(e) => e.into_inner(),
+        };
+        *t = addr;
+    }
+
+    /// Who a send goes to right now: the chosen one if it is still live, or
+    /// everyone.
+    ///
+    /// The liveness check matters — picking somebody and then watching them
+    /// switch their PC off should not silently send into the void, so a target
+    /// that has gone away falls back rather than swallowing the message.
+    fn recipients(&self) -> Vec<SocketAddr> {
+        let live = {
+            let t = match self.targets.lock() {
+                Ok(t) => t,
+                Err(e) => e.into_inner(),
+            };
+            t.live.clone()
+        };
+        let chosen = {
+            let t = match self.target.lock() {
+                Ok(t) => t,
+                Err(e) => e.into_inner(),
+            };
+            *t
+        };
+        match chosen {
+            Some(addr) if live.contains(&addr) => vec![addr],
+            Some(_) => Vec::new(),
+            None => live,
+        }
+    }
+
     /// Send one encoded audio frame to everyone live. `samples` is the sender's
     /// frame size, so the timestamp advances by what this machine actually
     /// captured rather than by a constant the receiver would have to guess at.
@@ -200,13 +245,7 @@ impl Handle {
         if data.len() > MAX_PAYLOAD {
             return;
         }
-        let targets = {
-            let t = match self.targets.lock() {
-                Ok(t) => t,
-                Err(e) => e.into_inner(),
-            };
-            t.live.clone()
-        };
+        let targets = self.recipients();
         if targets.is_empty() {
             return;
         }
@@ -260,13 +299,7 @@ impl Handle {
         if bytes.is_empty() || bytes.len() > MAX_PAYLOAD {
             return;
         }
-        let targets = {
-            let t = match self.targets.lock() {
-                Ok(t) => t,
-                Err(e) => e.into_inner(),
-            };
-            t.live.clone()
-        };
+        let targets = self.recipients();
 
         let mut buf = [0u8; HEADER_LEN + MAX_PAYLOAD];
         Header {
@@ -684,6 +717,7 @@ pub fn start(
         seq: AtomicU64::new(0),
         ts: AtomicU64::new(0),
         targets,
+        target: Arc::new(Mutex::new(None)),
         heard,
         last_audio,
         messages,

@@ -57,19 +57,14 @@ fn default_talk_shortcut() -> String {
     "F8".to_string()
 }
 
+/// Empty on purpose.
+///
+/// This is a tool for directing people, not for chatting with them, so shipped
+/// pleasantries were wrong. The mechanism stays — anyone who wants a key that
+/// fires "come to my desk" can add one — but nothing is invented on their
+/// behalf.
 fn default_presets() -> Vec<Preset> {
-    [
-        ("On my way", "On my way", "CommandOrControl+Alt+1"),
-        ("Lunch?", "Lunch?", "CommandOrControl+Alt+2"),
-        ("Call me", "Call me", "CommandOrControl+Alt+3"),
-    ]
-    .into_iter()
-    .map(|(label, text, shortcut)| Preset {
-        label: label.to_string(),
-        text: text.to_string(),
-        shortcut: shortcut.to_string(),
-    })
-    .collect()
+    Vec::new()
 }
 
 fn path(app: &AppHandle) -> Result<PathBuf> {
