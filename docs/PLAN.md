@@ -219,6 +219,45 @@ transport.
 
 ---
 
+## Required, added 2026-08-09
+
+Four things asked for after the plan was first written. They land inside the
+existing steps rather than after them.
+
+**Add PCs by hand** (step 3). The roster must not depend on mDNS alone: it is
+dropped or filtered on plenty of networks, a PC on another subnet is never
+discovered, and v1 already kept a hand-maintained roster. The roster becomes the
+union of discovered and manually added peers, with the source visible, and
+manual entries persist. An address typed by hand is also the fix for the v1 case
+of a PC whose name would not resolve on the LAN at all.
+
+**A complete shortcut set** (step 4), not one push-to-talk key — but **no
+per-person keys**, since targeting stays "everyone". Keys cover talking, sending
+each preset message, showing and hiding the window, and muting. They must be
+reassignable, persisted, and must report failure to register: a global hotkey
+silently losing a registration race to another application is a v1-class silent
+failure.
+
+**Voice and text separate** (step 5). In v1 one keypress both pinged someone and
+opened the mic to them, and that coupling is exactly what made the failure
+unreadable: the ping arrived and the voice did not, because the two halves
+resolved the name differently. They stay separate as actions and as code paths,
+while still sharing one socket and one header — a port per feature is what let
+the halves arrive independently in the first place.
+
+**Auto message** (step 5) means **preset messages on a key**: a short editable
+list — "on my way", "lunch?", "call me" — each sendable with one shortcut and no
+typing. Not auto-replies and not scheduled announcements; both were considered
+and neither is what is wanted. It is the direct descendant of v1's text ping,
+and it needs nothing from presence beyond knowing who is live.
+
+Adding a PC therefore means adding someone who *receives*, not someone who can
+be singled out. Confirmed 2026-08-09, after the roster raised the question a
+second time: the header keeps no target field, and a field nobody sets is not
+worth carrying.
+
+---
+
 ## Deferred, not forgotten
 
 - **Recover when the audio device changes or disappears.** `cpal` binds a stream
