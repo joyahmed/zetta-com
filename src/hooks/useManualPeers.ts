@@ -1,5 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { useEffect, useRef, useState } from 'react';
+import { DEMO, DEMO_PRESETS } from '../demo';
 import { loadSaved, saveSaved } from '../utils/storage';
 
 /// Manually entered peers, kept alongside whatever mDNS finds.
@@ -7,8 +8,10 @@ import { loadSaved, saveSaved } from '../utils/storage';
 /// The list lives in Rust's config file rather than here, because the transport
 /// has to bind to it before any window exists. This hook is a view of it.
 export const useManualPeers = (onError: (message: string) => void) => {
-	const [manual, setManual] = useState<string[]>([]);
-	const [presets, setPresets] = useState<Preset[]>([]);
+	const [manual, setManual] = useState<string[]>(
+		DEMO ? ['192.168.0.174:9001'] : []
+	);
+	const [presets, setPresets] = useState<Preset[]>(DEMO ? DEMO_PRESETS : []);
 
 	// Read synchronously at first render, not inside the effect below. The
 	// transport hook clears this same key on mount, and whichever effect ran
@@ -16,6 +19,7 @@ export const useManualPeers = (onError: (message: string) => void) => {
 	const stray = useRef(loadSaved().peer.trim()).current;
 
 	useEffect(() => {
+		if (DEMO) return;
 		const load = async () => {
 			const cfg = await invoke<Config | null>('config_get').catch(() => null);
 			setPresets(cfg?.presets ?? []);

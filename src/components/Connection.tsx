@@ -11,17 +11,19 @@ import { Field } from './Field';
 /// instead of the config, so it appeared in nobody's PC list and could not be
 /// removed. Whatever was in it is migrated into the PCs list on first launch.
 export const Connection = ({ port, onPort, disabled }: ConnectionProps) => (
-	<div className='flex flex-col gap-3'>
+	// gap-1.5, not gap-3: the sentence below is help for the field above it,
+	// and at the spacing that separates *sections* it read as one.
+	<div className='flex flex-col gap-1.5'>
 		<Field
 			{...{
 				label: 'Port',
 				value: port,
 				onChange: onPort,
 				disabled,
-				className: 'w-24'
+				className: 'w-28'
 			}}
 		/>
-		<p className='text-xs text-slate-500 dark:text-slate-400'>
+		<p className='text-xs text-muted'>
 			{disabled
 				? 'Stop the transport to change this.'
 				: 'Everyone must use the same port. Add a PC that discovery cannot reach from the PCs list.'}

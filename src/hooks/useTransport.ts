@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { useEffect, useRef, useState } from 'react';
+import { DEMO, DEMO_PEERS, DEMO_STATS } from '../demo';
 import { loadSaved, saveSaved } from '../utils/storage';
 import { isPortError, parsePort } from '../utils/validate';
 
@@ -13,8 +14,8 @@ const POLL_MS = 400;
 export const useTransport = () => {
 	const saved = useRef(loadSaved()).current;
 	const [port, setPort] = useState(saved.port);
-	const [stats, setStats] = useState<NetStats | null>(null);
-	const [peers, setPeers] = useState<Peer[]>([]);
+	const [stats, setStats] = useState<NetStats | null>(DEMO ? DEMO_STATS : null);
+	const [peers, setPeers] = useState<Peer[]>(DEMO ? DEMO_PEERS : []);
 	const [error, setError] = useState('');
 
 	// `peer` is written back empty rather than dropped from storage: the manual
@@ -28,6 +29,9 @@ export const useTransport = () => {
 	// transport is stopped, so there is no separate "is it running" call that
 	// could drift out of agreement with reality.
 	useEffect(() => {
+		// Nothing is bound in demo mode, so the poll would immediately replace
+		// the stand-in roster with an empty one.
+		if (DEMO) return;
 		let alive = true;
 		const id = setInterval(async () => {
 			try {

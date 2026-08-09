@@ -63,6 +63,20 @@ type MessagesProps = {
 	messages: Message[];
 	onSend: (text: string) => void;
 	disabled: boolean;
+	/// Rendered between the log and the input — the presets, in practice. A
+	/// slot rather than a presets prop, because the log has no business knowing
+	/// what a preset is; it only owns the fact that something sits there.
+	quick?: React.ReactNode;
+};
+
+/// The one-row target strip on the home screen. `onSeeAll` opens the full
+/// roster, which is where addresses and liveness are legible.
+type TargetsProps = {
+	peers: Peer[];
+	running: boolean;
+	target: string | null;
+	onTarget: (addr: string | null) => void;
+	onSeeAll: () => void;
 };
 
 type FieldProps = {
@@ -99,7 +113,12 @@ type ConnectionProps = {
 	disabled: boolean;
 };
 
-type AddPcProps = { onAdd: (addr: string) => Promise<void> };
+type AddPcProps = {
+	onAdd: (addr: string) => Promise<void>;
+	/// Applied straight after the add, keyed on the address as typed — which is
+	/// how a manual entry is identified everywhere until discovery resolves it.
+	onName: (addr: string, label: string) => Promise<void>;
+};
 
 type DiagnosticsProps = {
 	stats: NetStats | null;
@@ -123,6 +142,7 @@ type NavProps = {
 	onAddPc: () => void;
 	onShortcuts: () => void;
 	onSettings: () => void;
+	onDiagnostics: () => void;
 };
 
 /// One line of the PCs list. Flattened from a discovered `Peer` or from a bare
@@ -133,6 +153,11 @@ type PcRow = {
 	name: string;
 	manual: boolean;
 	live: boolean;
+	/// 1–9 where this PC has a `Ctrl+n` key, absent otherwise. Counted over the
+	/// discovered roster only, so it matches what the chips and the All PCs
+	/// list show — a manual entry the transport has not picked up yet is in
+	/// this list but not in the roster the shortcuts index into.
+	slot?: number;
 };
 
 type PcsProps = {

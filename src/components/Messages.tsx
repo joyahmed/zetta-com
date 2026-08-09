@@ -3,7 +3,19 @@ import { useEffect, useRef, useState } from 'react';
 const time = (ms: number) =>
 	new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
-export const Messages = ({ messages, onSend, disabled, to }: MessagesProps) => {
+/// What has been said, and the box you say it in.
+///
+/// The only thing on the screen allowed to grow. Everything above it — the talk
+/// bar, the target strip, the presets — has a fixed height and scrolls in its
+/// own axis, so a busy conversation takes space from nothing and the box you
+/// type in stays on the bottom edge where a chat window puts it.
+export const Messages = ({
+	messages,
+	onSend,
+	disabled,
+	to,
+	quick
+}: MessagesProps) => {
 	const [draft, setDraft] = useState('');
 	const end = useRef<HTMLDivElement>(null);
 
@@ -22,33 +34,60 @@ export const Messages = ({ messages, onSend, disabled, to }: MessagesProps) => {
 	};
 
 	return (
-		<section className='flex flex-col gap-2'>
-			<h2 className='text-sm font-medium'>Messages</h2>
-
-			<div className='flex max-h-56 min-h-24 flex-col gap-1 overflow-y-auto rounded-lg border border-slate-200 bg-white p-2 dark:border-slate-800 dark:bg-slate-900'>
-				{messages.length === 0 && (
-					<p className='m-auto text-sm text-slate-400 dark:text-slate-500'>
-						Nothing yet.
+		<section className='flex min-h-0 flex-1 flex-col gap-2'>
+			<div className='flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto rounded-xl border border-line bg-surface p-2'>
+				{messages.length === 0 ? (
+					<p className='m-auto px-6 text-center text-sm text-faint'>
+						{disabled
+							? 'Start the transport to send and receive.'
+							: 'Nothing said yet.'}
 					</p>
+				) : (
+					messages.map((m, i) => {
+						// Consecutive lines from the same person drop the name.
+						// A column of "You You You" is noise, and removing it
+						// makes a change of speaker the thing that stands out.
+						const who = m.mine ? 'You' : m.from;
+						const prev = messages[i - 1];
+						const same =
+							prev && (prev.mine ? 'You' : prev.from) === who;
+
+						return (
+							<div
+								key={m.id}
+								className={`flex items-baseline gap-2 rounded-md px-1.5 py-0.5 text-sm ${
+									same ? '' : 'mt-1.5 first:mt-0'
+								}`}
+							>
+								<span className='w-14 shrink-0 font-mono text-xs text-faint'>
+									{time(m.at)}
+								</span>
+								<span
+									className={`w-16 shrink-0 truncate text-xs font-medium ${
+										same
+											? 'text-transparent'
+											: m.mine
+												? 'text-muted'
+												: 'text-accent'
+									}`}
+								>
+									{who}
+								</span>
+								<span
+									className={`min-w-0 wrap-break-word ${
+										m.mine ? 'text-muted' : 'text-ink'
+									}`}
+								>
+									{m.text}
+								</span>
+							</div>
+						);
+					})
 				)}
-				{messages.map(m => (
-					<div
-						key={m.id}
-						className={`flex items-baseline gap-2 text-sm ${
-							m.mine ? 'text-slate-500 dark:text-slate-400' : ''
-						}`}
-					>
-						<span className='shrink-0 font-mono text-xs text-slate-400 dark:text-slate-500'>
-							{time(m.at)}
-						</span>
-						<span className='shrink-0 font-medium'>
-							{m.mine ? 'You' : m.from}
-						</span>
-						<span className='wrap-break-word'>{m.text}</span>
-					</div>
-				))}
 				<div ref={end} />
 			</div>
+
+			{quick}
 
 			<form className='flex gap-2' onSubmit={submit}>
 				<input
@@ -56,12 +95,12 @@ export const Messages = ({ messages, onSend, disabled, to }: MessagesProps) => {
 					onChange={e => setDraft(e.currentTarget.value)}
 					disabled={disabled}
 					placeholder={disabled ? 'Start to send messages' : `Message ${to}`}
-					className='flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm outline-none transition placeholder:text-slate-400 focus:border-teal-500 focus:ring-2 focus:ring-teal-500/30 disabled:opacity-55 dark:border-slate-700 dark:bg-slate-900'
+					className='min-w-0 flex-1 rounded-xl border border-line bg-surface px-3 py-2.5 text-sm text-ink outline-none transition placeholder:text-faint focus:border-accent disabled:opacity-50'
 				/>
 				<button
 					type='submit'
 					disabled={disabled}
-					className='rounded-lg bg-teal-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-teal-500 disabled:opacity-55'
+					className='shrink-0 rounded-xl bg-accent px-4 py-2.5 text-sm font-medium text-on-accent transition hover:bg-accent-hover disabled:opacity-50'
 				>
 					Send
 				</button>

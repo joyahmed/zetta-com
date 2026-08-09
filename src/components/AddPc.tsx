@@ -4,34 +4,76 @@ import { useState } from 'react';
 ///
 /// Not the main road: discovery supplies peers on a normal network, and this is
 /// for the ones that filter mDNS, and for a PC on another subnet that will never
-/// be discovered at all. It only adds — the list below owns renaming, correcting
-/// and removing, so there is one place to look for each of those.
-export const AddPc = ({ onAdd }: AddPcProps) => {
-	const [draft, setDraft] = useState('');
+/// be discovered at all.
+///
+/// It takes a name as well as an address. It used to take only the address, so
+/// adding a machine meant typing `192.168.0.42:9001`, closing this, opening
+/// Settings and renaming the row that appeared — three steps to do one thing, at
+/// the one moment you actually know whose machine it is.
+export const AddPc = ({ onAdd, onName }: AddPcProps) => {
+	const [addr, setAddr] = useState('');
+	const [name, setName] = useState('');
+	const [busy, setBusy] = useState(false);
 
 	const submit = async (e: React.FormEvent) => {
 		e.preventDefault();
-		const addr = draft.trim();
-		if (!addr) return;
-		await onAdd(addr);
-		setDraft('');
+		const entry = addr.trim();
+		if (!entry || busy) return;
+
+		setBusy(true);
+		try {
+			// Added first. If the address will not resolve the add reports it
+			// and no label is left behind pointing at a machine that was never
+			// taken.
+			await onAdd(entry);
+			const label = name.trim();
+			if (label) await onName(entry, label);
+			setAddr('');
+			setName('');
+		} finally {
+			setBusy(false);
+		}
 	};
 
 	return (
 		// Adding restarts the transport, so the change takes effect immediately
 		// rather than at the next launch.
-		<form className='flex gap-2' onSubmit={submit}>
-			<input
-				value={draft}
-				onChange={e => setDraft(e.currentTarget.value)}
-				placeholder='192.168.0.42:9001'
-				className='min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 py-2 font-mono text-sm outline-none focus:border-teal-500 dark:border-slate-700 dark:bg-slate-900'
-			/>
+		<form className='flex flex-col gap-3' onSubmit={submit}>
+			<label className='flex flex-col gap-1'>
+				<span className='text-xs font-medium tracking-wide text-muted uppercase'>
+					Address
+				</span>
+				<input
+					value={addr}
+					onChange={e => setAddr(e.currentTarget.value)}
+					placeholder='192.168.0.42:9001'
+					autoFocus
+					className='rounded-lg border border-line bg-surface px-3 py-2 font-mono text-sm outline-none focus:border-accent'
+				/>
+			</label>
+
+			<label className='flex flex-col gap-1'>
+				<span className='text-xs font-medium tracking-wide text-muted uppercase'>
+					Name
+				</span>
+				<input
+					value={name}
+					onChange={e => setName(e.currentTarget.value)}
+					placeholder='Who is at that machine'
+					className='rounded-lg border border-line bg-surface px-3 py-2 text-sm outline-none focus:border-accent'
+				/>
+				<span className='text-xs text-faint'>
+					Optional. Left empty, the PC is listed by its address until
+					it announces a name of its own.
+				</span>
+			</label>
+
 			<button
 				type='submit'
-				className='shrink-0 rounded-lg bg-teal-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-teal-500'
+				disabled={busy || !addr.trim()}
+				className='self-start rounded-lg bg-accent px-4 py-2 text-sm font-medium text-on-accent transition hover:bg-accent-hover disabled:opacity-50'
 			>
-				Add
+				{busy ? 'Adding…' : 'Add'}
 			</button>
 		</form>
 	);

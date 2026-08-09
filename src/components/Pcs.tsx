@@ -1,63 +1,57 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { Dot } from './Dot';
 
-/// Every PC the app knows about, discovered or added manually, in one list.
+/// Every PC the app knows about, discovered or added manually.
 ///
-/// These were two separate places before, and neither was complete: an
-/// "Advanced" list that could add and remove an address but not correct one, and
-/// a "Names" list below it that could rename a PC but not delete it. Fixing a
-/// typo meant deleting the PC and typing the whole thing again. One row per PC
-/// now owns all three.
+/// A list you read, not a form you fill in. The first version of this made every
+/// row a live text box that saved on blur, which meant the list looked like a
+/// wall of identical fields, a stray click anywhere rebound the transport, and a
+/// background poll could land in the middle of a name you were still typing.
+///
+/// Editing is deliberate now: one row at a time, with Save and Cancel, and the
+/// draft held outside the row so a poll cannot reach it.
 export const Pcs = ({ peers, manual, onRename, onEdit, onRemove }: PcsProps) => {
-	const [names, setNames] = useState<Record<string, string>>({});
-	const [addrs, setAddrs] = useState<Record<string, string>>({});
+	const [editing, setEditing] = useState<string | null>(null);
+	const [name, setName] = useState('');
+	const [addr, setAddr] = useState('');
 
 	// Manual entries have to be merged in rather than read off the roster: the
 	// roster is empty while the transport is stopped, and a PC you added should
 	// still be there to edit when it is.
 	const rows: PcRow[] = [
-		...peers.map(p => ({
+		...peers.map((p, i) => ({
 			addr: p.addr,
 			name: p.name,
 			manual: p.manual,
-			live: p.live
+			live: p.live,
+			slot: i < 9 ? i + 1 : undefined
 		})),
 		...manual
 			.filter(a => !peers.some(p => p.addr === a))
 			.map(a => ({ addr: a, name: a, manual: true, live: false }))
 	];
 
-	// Seeded from the roster, and re-seeded when a name arrives from the network
-	// — otherwise a field you have not touched would sit showing an address
-	// after the heartbeat that named it. Fields you *have* touched are left
-	// alone, so a poll cannot overwrite what you are in the middle of typing.
-	useEffect(() => {
-		setNames(d => {
-			const next = { ...d };
-			for (const r of rows) if (!(r.addr in next)) next[r.addr] = r.name;
-			return next;
-		});
-		setAddrs(d => {
-			const next = { ...d };
-			for (const r of rows) if (!(r.addr in next)) next[r.addr] = r.addr;
-			return next;
-		});
-	}, [peers, manual]);
+	const begin = (r: PcRow) => {
+		setEditing(r.addr);
+		setName(r.name);
+		setAddr(r.addr);
+	};
 
-	/// Empty or unchanged puts the field back rather than sending a rebind that
-	/// would change nothing.
-	const commitAddr = (from: string) => {
-		const to = (addrs[from] ?? '').trim();
-		if (!to || to === from) {
-			setAddrs(d => ({ ...d, [from]: from }));
-			return;
+	/// Only what actually changed is sent. Each of these restarts the transport,
+	/// so saving a row you opened and thought better of should cost nothing.
+	const save = async (r: PcRow) => {
+		const nextName = name.trim();
+		const nextAddr = addr.trim();
+		setEditing(null);
+		if (nextName !== r.name) await onRename(r.addr, nextName);
+		if (r.manual && nextAddr && nextAddr !== r.addr) {
+			await onEdit(r.addr, nextAddr);
 		}
-		onEdit(from, to);
 	};
 
 	if (rows.length === 0) {
 		return (
-			<p className='text-sm text-slate-500 dark:text-slate-400'>
+			<p className='text-sm text-muted'>
 				No PCs yet. Add one above, or start the transport and wait for
 				discovery.
 			</p>
@@ -65,68 +59,126 @@ export const Pcs = ({ peers, manual, onRename, onEdit, onRemove }: PcsProps) => 
 	}
 
 	return (
-		<div className='flex flex-col gap-2'>
-			{rows.map(r => (
-				<div
-					key={r.addr}
-					className='flex flex-col gap-1.5 rounded-lg border border-slate-200 p-2 dark:border-slate-800'
-				>
-					<div className='flex items-center gap-2'>
-						<Dot {...{ on: r.live }} />
-						<input
-							value={names[r.addr] ?? r.name}
-							onChange={e =>
-								setNames(d => ({
-									...d,
-									[r.addr]: e.currentTarget.value
-								}))
-							}
-							// Saved on blur and on Enter rather than per
-							// keystroke: every save restarts the transport, and
-							// doing that on each letter would be absurd.
-							onBlur={() => onRename(r.addr, names[r.addr] ?? '')}
-							onKeyDown={e => {
-								if (e.key === 'Enter') e.currentTarget.blur();
-							}}
-							className='min-w-0 flex-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm outline-none focus:border-teal-500 dark:border-slate-700 dark:bg-slate-900'
-						/>
-						{/* Only manual entries can be deleted. A discovered PC
-						    would be back in the roster within seconds, so the
-						    button would be a lie. */}
-						{r.manual && (
+		// Recessed against the panel it sits on. An outlined box with
+		// transparent rows reads as an empty frame rather than as a list.
+		<div className='overflow-hidden rounded-lg border border-line bg-sunken'>
+			{rows.map(r =>
+				editing === r.addr ? (
+					<div
+						key={r.addr}
+						className='flex flex-col gap-2 border-b border-line-soft bg-sunken p-2 last:border-0'
+					>
+						{/* Labelled, because two bare boxes one above the other
+						    give no way to tell which is the name and which is
+						    the address. The name is not monospaced and the
+						    address is, which says the same thing again. */}
+						<label className='flex flex-col gap-1'>
+							<span className='text-xs font-medium tracking-wide text-muted uppercase'>
+								Name
+							</span>
+							<input
+								value={name}
+								onChange={e => setName(e.currentTarget.value)}
+								onKeyDown={e => {
+									if (e.key === 'Enter') save(r);
+									if (e.key === 'Escape') setEditing(null);
+								}}
+								autoFocus
+								placeholder='A name you will recognise'
+								className='rounded-lg border border-line bg-surface px-3 py-1.5 text-sm outline-none focus:border-accent'
+							/>
+						</label>
+
+						{/* Only a manual address is editable. A discovered one
+						    comes from the advertisement and would be overwritten
+						    by the next announcement anyway. */}
+						{r.manual ? (
+							<label className='flex flex-col gap-1'>
+								<span className='text-xs font-medium tracking-wide text-muted uppercase'>
+									Address
+								</span>
+								<input
+									value={addr}
+									onChange={e => setAddr(e.currentTarget.value)}
+									onKeyDown={e => {
+										if (e.key === 'Enter') save(r);
+										if (e.key === 'Escape') setEditing(null);
+									}}
+									placeholder='192.168.0.42:9001'
+									className='rounded-lg border border-line bg-surface px-3 py-1.5 font-mono text-xs outline-none focus:border-accent'
+								/>
+							</label>
+						) : (
+							<p className='font-mono text-xs text-faint'>
+								{r.addr} · found automatically, so the address is
+								not yours to change
+							</p>
+						)}
+
+						<div className='flex gap-2'>
 							<button
 								type='button'
-								onClick={() => onRemove(r.addr)}
-								aria-label={`Remove ${r.name}`}
-								className='shrink-0 rounded-md px-2 py-1 text-xs text-slate-500 transition hover:bg-rose-50 hover:text-rose-600 dark:text-slate-400 dark:hover:bg-rose-950/40'
+								onClick={() => save(r)}
+								className='rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-on-accent transition hover:bg-accent-hover'
 							>
-								Remove
+								Save
 							</button>
-						)}
+							<button
+								type='button'
+								onClick={() => setEditing(null)}
+								className='rounded-lg px-3 py-1.5 text-xs text-muted transition hover:bg-sunken'
+							>
+								Cancel
+							</button>
+							{r.manual && (
+								<button
+									type='button'
+									onClick={() => {
+										setEditing(null);
+										onRemove(r.addr);
+									}}
+									className='ml-auto rounded-lg px-3 py-1.5 text-xs text-muted transition hover:bg-danger-soft hover:text-danger'
+								>
+									Remove
+								</button>
+							)}
+						</div>
 					</div>
-
-					{r.manual ? (
-						<input
-							value={addrs[r.addr] ?? r.addr}
-							onChange={e =>
-								setAddrs(d => ({
-									...d,
-									[r.addr]: e.currentTarget.value
-								}))
-							}
-							onBlur={() => commitAddr(r.addr)}
-							onKeyDown={e => {
-								if (e.key === 'Enter') e.currentTarget.blur();
-							}}
-							className='min-w-0 rounded-lg border border-slate-200 bg-white px-3 py-1 font-mono text-xs outline-none focus:border-teal-500 dark:border-slate-800 dark:bg-slate-900'
-						/>
-					) : (
-						<p className='px-1 font-mono text-xs text-slate-400 dark:text-slate-500'>
-							{r.addr} · found automatically
-						</p>
-					)}
-				</div>
-			))}
+				) : (
+					<div
+						key={r.addr}
+						className='group flex items-center gap-2 border-b border-line-soft px-3 py-2 last:border-0'
+					>
+						<Dot {...{ on: r.live }} />
+						<div className='min-w-0 flex-1'>
+							<p className='flex items-baseline gap-1.5 truncate text-sm font-medium'>
+								{r.name}
+								{/* Which Ctrl+n reaches this machine, shown
+								    where you come to think about the machine. */}
+								{r.slot !== undefined && (
+									<span
+										title={`Ctrl+${r.slot} to talk, Ctrl+Shift+${r.slot} to message`}
+										className='font-mono text-[0.65rem] font-normal text-faint'
+									>
+										{r.slot}
+									</span>
+								)}
+							</p>
+							<p className='truncate font-mono text-xs text-faint'>
+								{r.addr}
+								{r.manual ? '' : ' · found automatically'}
+							</p>
+						</div>
+						<button
+							type='button'
+							onClick={() => begin(r)}
+							className='shrink-0 rounded-md px-2 py-1 text-xs text-muted transition hover:bg-sunken hover:text-ink'
+						>
+							Edit
+						</button>
+					</div>
+				)
+			)}
 		</div>
 	);
 };

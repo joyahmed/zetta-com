@@ -1,3 +1,4 @@
+import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Dot } from './Dot';
 
 const IconButton = ({
@@ -14,7 +15,28 @@ const IconButton = ({
 		onClick={onClick}
 		title={label}
 		aria-label={label}
-		className='rounded-lg p-2 text-slate-500 transition hover:bg-slate-200 hover:text-slate-900 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100'
+		className='rounded-lg p-2 text-muted transition hover:bg-sunken hover:text-ink'
+	>
+		{children}
+	</button>
+);
+
+/// Minimise and close, since the window has no decorations any more.
+const WindowButton = ({
+	label,
+	onClick,
+	children
+}: {
+	label: string;
+	onClick: () => void;
+	children: React.ReactNode;
+}) => (
+	<button
+		type='button'
+		onClick={onClick}
+		title={label}
+		aria-label={label}
+		className='rounded-md px-2 py-1 text-faint transition hover:bg-sunken hover:text-ink'
 	>
 		{children}
 	</button>
@@ -23,31 +45,81 @@ const IconButton = ({
 /// The top bar: who you are, whether you are on, and the way to everything
 /// that is not the main job.
 ///
-/// Settings, the key list and adding a PC all used to be expanders stacked
-/// under the roster, which made the screen a pile of everything. They are
-/// places you visit now, and the bar is how you get there.
+/// It is also the title bar. The window is undecorated, so the name, the icon,
+/// the drag handle and the window buttons are all this component's problem now.
 export const Nav = ({
 	me,
 	running,
 	onToggle,
 	onAddPc,
 	onShortcuts,
-	onSettings
+	onSettings,
+	onDiagnostics
 }: NavProps) => (
-	// The bar itself spans the window so its border and blur reach both edges,
-	// but its contents are held to the same max-w-md column as the main screen
-	// and the modals. Without the inner wrapper the buttons drifted out to the
-	// far corners the moment the window was widened, while the roster below
-	// stayed in a narrow strip down the middle.
-	<header className='sticky top-0 z-10 border-b border-slate-200 bg-slate-50/90 backdrop-blur dark:border-slate-800 dark:bg-slate-950/90'>
-		<div className='mx-auto flex w-full max-w-md items-center gap-3 px-4 py-3'>
-			<div className='min-w-0 flex-1'>
-				<h1 className='truncate text-sm font-semibold tracking-tight'>
+	<header className='sticky top-0 z-10 border-b border-line bg-canvas/90 backdrop-blur'>
+		{/* Tauri starts a drag when the element actually clicked carries the
+		    attribute — it does not inherit — so every non-interactive part of
+		    the bar has to say so itself. Miss one and it becomes a dead patch
+		    the window cannot be moved by, which is what most of this bar was. */}
+		<div
+			data-tauri-drag-region
+			className='flex items-center justify-end gap-1 px-2 pt-1.5'
+		>
+			<WindowButton
+				{...{
+					label: 'Minimise',
+					onClick: () => getCurrentWindow().minimize()
+				}}
+			>
+				<svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round'>
+					<path d='M5 12h14' />
+				</svg>
+			</WindowButton>
+			{/* close(), not hide(): Rust already intercepts CloseRequested and
+			    hides the window instead of quitting, so going through the real
+			    close keeps one rule in one place. Quit stays in the tray. */}
+			<WindowButton
+				{...{
+					label: 'Close to tray',
+					onClick: () => getCurrentWindow().close()
+				}}
+			>
+				<svg width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round'>
+					<path d='M6 6l12 12M18 6L6 18' />
+				</svg>
+			</WindowButton>
+		</div>
+
+		<div
+			data-tauri-drag-region
+			className='mx-auto flex w-full max-w-md items-center gap-3 px-4 pt-1 pb-3'
+		>
+			<img
+				data-tauri-drag-region
+				src='/icon.png'
+				alt=''
+				width='24'
+				height='24'
+				className='shrink-0 rounded'
+			/>
+
+			{/* Not a button any more. It was the way into the diagnostics, which
+			    made the one obvious thing to grab the window by the one thing
+			    you could not — and nothing about a title says "click me". The
+			    diagnostics have their own icon beside the others now. */}
+			<div data-tauri-drag-region className='min-w-0 flex-1'>
+				<h1
+					data-tauri-drag-region
+					className='truncate text-sm font-semibold tracking-tight'
+				>
 					Zetta Com
 				</h1>
-				<p className='flex items-center gap-1.5 truncate text-xs text-slate-500 dark:text-slate-400'>
+				<p
+					data-tauri-drag-region
+					className='flex items-center gap-1.5 truncate text-xs text-muted'
+				>
 					<Dot {...{ on: running }} />
-					{me ? me : ' '}
+					{me ? me : ' '}
 				</p>
 			</div>
 
@@ -62,6 +134,13 @@ export const Nav = ({
 					<path d='M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8' />
 				</svg>
 			</IconButton>
+			{/* A trace, because that is what the panel behind it is: the counters
+			    moving or not moving is the whole answer. */}
+			<IconButton {...{ label: 'Diagnostics', onClick: onDiagnostics }}>
+				<svg width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round'>
+					<path d='M3 12h3.5l2-6 4 13 2.5-7H21' />
+				</svg>
+			</IconButton>
 			<IconButton {...{ label: 'Settings', onClick: onSettings }}>
 				<svg width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round'>
 					<circle cx='12' cy='12' r='3' />
@@ -72,10 +151,14 @@ export const Nav = ({
 			<button
 				type='button'
 				onClick={onToggle}
-				className={`ml-1 rounded-lg px-3 py-1.5 text-sm font-medium text-white transition ${
+				// The colour is set per state, not once in the base with an
+				// override after it — two text-colour utilities on one element
+				// are resolved by stylesheet order, which is not something the
+				// author of the element gets to decide.
+				className={`ml-1 rounded-lg px-3 py-1.5 text-sm font-medium transition ${
 					running
-						? 'bg-slate-700 hover:bg-slate-600'
-						: 'bg-teal-600 hover:bg-teal-500'
+						? 'bg-sunken text-ink hover:bg-line'
+						: 'bg-accent text-on-accent hover:bg-accent-hover'
 				}`}
 			>
 				{running ? 'Stop' : 'Start'}
