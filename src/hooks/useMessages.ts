@@ -5,6 +5,7 @@ import {
 	sendNotification
 } from '@tauri-apps/plugin-notification';
 import { useEffect, useRef, useState } from 'react';
+import { DEMO, DEMO_MESSAGES } from '../demo';
 
 const POLL_MS = 600;
 
@@ -12,7 +13,9 @@ const POLL_MS = 600;
 /// and text went out on one keypress, and when only one of them arrived there
 /// was no way to tell which half had failed.
 export const useMessages = (running: boolean) => {
-	const [messages, setMessages] = useState<Message[]>([]);
+	const [messages, setMessages] = useState<Message[]>(
+		DEMO ? DEMO_MESSAGES : []
+	);
 	// Highest id already seen. Notifying on anything above it means a restart
 	// never replays the whole log at you as a burst of toasts.
 	const seen = useRef(0);
@@ -27,6 +30,7 @@ export const useMessages = (running: boolean) => {
 	}, []);
 
 	useEffect(() => {
+		if (DEMO) return;
 		if (!running) {
 			setMessages([]);
 			return;
