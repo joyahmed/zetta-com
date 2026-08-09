@@ -38,8 +38,8 @@ const USABLE_FORMATS: [SampleFormat; 2] = [SampleFormat::F32, SampleFormat::I16]
 const MAX_FRAME: usize = 960;
 /// A 20 ms Opus packet never exceeds 1275 bytes. This is slack.
 const MAX_PACKET: usize = 4_000;
-/// One second of headroom in each ring, sized for the highest rate.
-const RING: usize = 48_000;
+/// How many 20 ms frames a ring may hold — roughly 160 ms of slack.
+const RING_FRAMES: usize = 8;
 const BITRATE: i32 = 32_000;
 
 /// Dropping this stops the loopback: the audio thread sees the flag, returns,
@@ -124,8 +124,13 @@ fn build(stop: &Arc<AtomicBool>) -> Result<Streams> {
         out_frame
     );
 
-    let (mut prod_a, mut cons_a) = HeapRb::<i16>::new(RING).split();
-    let (mut prod_b, mut cons_b) = HeapRb::<i16>::new(RING).split();
+    // Sized in frames, not seconds. A ring's capacity is a latency ceiling: if
+    // it can hold a second of audio then one transient stall fills it with a
+    // second of audio and it never gives that back, so you hear yourself late
+    // for the rest of the session. At RING_FRAMES the same stall costs 160 ms
+    // and is paid back by dropping, which is the right trade for speech.
+    let (mut prod_a, mut cons_a) = HeapRb::<i16>::new(in_frame * RING_FRAMES).split();
+    let (mut prod_b, mut cons_b) = HeapRb::<i16>::new(out_frame * RING_FRAMES).split();
 
     let in_ch = in_cfg.channels() as usize;
     let out_ch = out_cfg.channels() as usize;
