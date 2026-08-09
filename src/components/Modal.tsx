@@ -21,22 +21,32 @@ export const Modal = ({ title, open, onClose, children }: ModalProps) => {
 
 	return (
 		<div
-			className='fixed inset-0 z-50 flex items-start justify-center bg-slate-950/50 p-3 pt-14 backdrop-blur-sm'
+			// Still top-aligned rather than centred, so a panel that grows does
+			// it downwards instead of shifting under the pointer. The gap above
+			// is only what it takes to keep the header visible behind it.
+			className='fixed inset-0 z-50 flex items-start justify-center bg-scrim/60 p-3 pt-10 backdrop-blur-sm'
 			onClick={onClose}
 		>
 			<div
 				// Stops a click inside the panel from reaching the backdrop and
 				// closing the thing you are trying to use.
 				onClick={e => e.stopPropagation()}
-				className='flex max-h-[80vh] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 shadow-2xl dark:border-slate-800 dark:bg-slate-950'
+				// Sized against the window rather than a flat 80vh: the
+				// shortcut list is twenty-odd rows and was scrolling inside a
+				// box with empty space below it. This leaves the same gap top
+				// and bottom and gives everything between them to the panel.
+				// `surface`, not `canvas`. A dialog painted the same colour as
+				// the window behind it does not read as something raised over
+				// the backdrop — it reads as the app having gone strange.
+				className='flex max-h-[calc(100vh-5rem)] w-full max-w-md flex-col overflow-hidden rounded-2xl border border-line bg-surface shadow-2xl'
 			>
-				<header className='flex items-center justify-between border-b border-slate-200 px-4 py-3 dark:border-slate-800'>
+				<header className='flex items-center justify-between border-b border-line-soft px-4 py-3'>
 					<h2 className='text-sm font-semibold'>{title}</h2>
 					<button
 						type='button'
 						onClick={onClose}
 						aria-label='Close'
-						className='rounded-md px-2 py-1 text-slate-400 transition hover:bg-slate-200 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200'
+						className='rounded-md px-2 py-1 text-faint transition hover:bg-sunken hover:text-ink'
 					>
 						✕
 					</button>

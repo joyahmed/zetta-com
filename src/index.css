@@ -1,6 +1,121 @@
 @import "tailwindcss";
 
 /* Tailwind v4 is configured here, in CSS, not in a tailwind.config.js — that
-   file is a v3 idiom and does nothing now. Design tokens go in an @theme block
-   in this file when the palette is decided (step 5, once the roster, talk state
-   and message log all exist to design against). */
+   file is a v3 idiom and does nothing now.
+
+   The palette is named by *role*, not by colour. Every component used to carry
+   its own `slate-200 dark:border-slate-800` pair, so a change to the surface
+   colour meant finding every copy of it, and the dark theme was a second design
+   maintained by hand beside the first. Utilities generated from these tokens
+   resolve to `var(--color-…)` at use time, so redefining the variables under a
+   dark media query re-themes the whole app without a single `dark:` class. */
+@theme {
+	/* The window behind everything. */
+	--color-canvas: #f8fafc;
+	/* Anything raised off it: cards, inputs, the message log. */
+	--color-surface: #ffffff;
+	/* A surface that wants to read as recessed rather than raised. */
+	--color-sunken: #f1f5f9;
+
+	--color-ink: #0f172a;
+	--color-muted: #64748b;
+	/* Addresses, timestamps, key caps — present but never competing. */
+	--color-faint: #94a3b8;
+
+	--color-line: #e2e8f0;
+	--color-line-soft: #f1f5f9;
+
+	--color-accent: #0d9488;
+	--color-accent-hover: #14b8a6;
+	--color-accent-soft: #f0fdfa;
+	--color-on-accent: #ffffff;
+
+	--color-danger: #e11d48;
+	--color-danger-soft: #fff1f2;
+
+	/* The dim behind a modal. One of the few colours that must NOT invert with
+	   the theme: it is not "the ink colour at low opacity", it is shadow. Using
+	   `ink` for it made the dark theme lay a 40% white wash over the app and
+	   the background went pale instead of receding. */
+	--color-scrim: #020617;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--color-canvas: #020617;
+		--color-surface: #0f172a;
+		--color-sunken: #0b1220;
+
+		--color-ink: #f1f5f9;
+		--color-muted: #94a3b8;
+		--color-faint: #64748b;
+
+		--color-line: #1e293b;
+		--color-line-soft: #172033;
+
+		/* Teal 600 is too dark to read against a near-black surface; the same
+		   role wants a lighter value here, which is exactly what naming by role
+		   rather than by shade makes possible. */
+		--color-accent: #14b8a6;
+		--color-accent-hover: #2dd4bf;
+		--color-accent-soft: #042f2e;
+		--color-on-accent: #04211f;
+
+		--color-danger: #fb7185;
+		--color-danger-soft: #2a0d14;
+	}
+}
+
+/* The platform scrollbar is a wide grey slab with arrow buttons, and in a panel
+   this narrow it takes a visible bite out of the message log and the modals.
+   Styled rather than hidden: a log you can scroll with no indication that there
+   is more above it is worse than an ugly bar.
+
+   Both syntaxes are needed — `scrollbar-width` is what Firefox implements, and
+   WebKit (the macOS and Linux webviews) still only understands the
+   pseudo-elements. */
+/* Inside `@layer base` on purpose. Unlayered CSS beats *every* layered rule
+   regardless of specificity, so writing these at the top level put them above
+   Tailwind's utilities layer — and `.no-scrollbar` lost to a `*` selector.
+
+   `::-webkit-scrollbar` only, with no `scrollbar-width`. Chromium treats the
+   standard property as a switch: set it, and the element gets native scrollbar
+   rendering and these pseudo-elements are ignored outright. That is why the
+   panel was showing stock scrollbars with arrow buttons while this said 8px and
+   rounded. Nothing is lost by dropping it — every webview this app runs in
+   (WebView2, WKWebView, WebKitGTK) is WebKit or Chromium. */
+@layer base {
+	::-webkit-scrollbar {
+		width: 8px;
+		height: 8px;
+	}
+
+	::-webkit-scrollbar-track,
+	::-webkit-scrollbar-corner {
+		background: transparent;
+	}
+
+	/* The stepper arrows at each end. Chromium draws them by default on
+	   Windows and they are half the reason the default bar looks like a slab. */
+	::-webkit-scrollbar-button {
+		display: none;
+	}
+
+	::-webkit-scrollbar-thumb {
+		background: var(--color-line);
+		border-radius: 9999px;
+	}
+
+	::-webkit-scrollbar-thumb:hover {
+		background: var(--color-faint);
+	}
+}
+
+/* For strips that scroll sideways. A horizontal bar under a row of chips reads
+   as a broken layout rather than as an affordance, and the chips themselves
+   already show they continue past the edge. */
+@utility no-scrollbar {
+	&::-webkit-scrollbar {
+		display: none;
+	}
+}

@@ -1,7 +1,8 @@
 export const Dot = ({ on }: DotProps) => (
 	<span
-		className={`size-2 shrink-0 rounded-full ${
-			on ? 'bg-teal-500' : 'bg-slate-300 dark:bg-slate-700'
-		}`}
+		// Offline is `faint`, not `line`. A border colour on a panel of the same
+		// family is invisible, and "no dot" and "a dot I cannot see" mean very
+		// different things in a roster whose whole job is reporting absence.
+		className={`size-2 shrink-0 rounded-full ${on ? 'bg-accent' : 'bg-faint'}`}
 	/>
 );
