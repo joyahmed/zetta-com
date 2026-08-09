@@ -123,7 +123,7 @@ own; the [release workflow](.github/workflows/release.yml) does all of them.
 | `Ctrl+Shift+1…9` | message that PC |
 | `Ctrl+Shift+0` | message everyone |
 | `F9` | start or stop |
-| `F10` | open the window |
+| `Ctrl+Alt+T` | open the window |
 | `F1` | show all shortcuts |
 
 <p align="center">

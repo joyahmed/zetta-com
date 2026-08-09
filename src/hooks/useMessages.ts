@@ -7,6 +7,7 @@ import {
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useEffect, useRef, useState } from 'react';
 import { DEMO, DEMO_MESSAGES } from '../demo';
+import { chime } from '../utils/chime';
 
 const POLL_MS = 600;
 
@@ -63,6 +64,10 @@ export const useMessages = (running: boolean) => {
 						.then(([visible, focused]) => visible && focused)
 						.catch(() => false);
 					if (!attended) {
+						// Once, however many arrived together. A chime per
+						// message turns three at the same moment into a noise
+						// nobody can count.
+						chime();
 						for (const msg of fresh) {
 							sendNotification({
 								title: msg.from || 'Intercom',

@@ -76,7 +76,12 @@ pub const EDITABLE: [(&str, &str, &str); 6] = [
         "CommandOrControl+Shift+Digit0",
     ),
     ("start-stop", "Start or stop", "F9"),
-    ("open-window", "Open the window", "F10"),
+    // Ctrl+Alt+T rather than F10. F10 registers, but Windows treats it as the
+    // menu-bar key and other applications swallow it, so a global key on it is
+    // one that sometimes silently does nothing — the exact failure this list
+    // exists to expose. This is also the key people already reach for to wake
+    // the app.
+    ("open-window", "Open the window", "CommandOrControl+Alt+KeyT"),
     ("show-shortcuts", "Show shortcuts", "F1"),
 ];
 
