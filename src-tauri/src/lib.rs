@@ -47,19 +47,73 @@ fn net_start(
     port: u16,
     peer: String,
 ) -> Result<(), String> {
+    let manual = config::load(&app).map(|c| c.manual).unwrap_or_default();
     let mut guard = state.0.lock().map_err(|e| e.to_string())?;
     // Drop any existing transport before binding, or starting on the same port
     // fails with "address already in use" against ourselves.
     *guard = None;
-    *guard =
-        Some(session::start(port, &peer, ptt.0.clone()).map_err(|e| format!("{e:#}"))?);
+    *guard = Some(
+        session::start(port, &peer, &manual, ptt.0.clone()).map_err(|e| format!("{e:#}"))?,
+    );
 
     // Saved only after a successful bind, so a setting that cannot work is
     // never the one restored at next launch.
-    if let Err(e) = config::save(&app, &config::Config { port, peer }) {
+    if let Err(e) = config::save(
+        &app,
+        &config::Config {
+            port,
+            peer,
+            manual,
+        },
+    ) {
         eprintln!("[config] not saved: {e:#}");
     }
     Ok(())
+}
+
+/// Add or remove a hand-entered peer, then rebind so it takes effect.
+///
+/// Restarting rather than mutating the live list: the roster changes rarely,
+/// and a rebind is one code path instead of two that have to agree.
+#[tauri::command]
+fn manual_peers(
+    app: tauri::AppHandle,
+    state: State<NetState>,
+    ptt: State<Ptt>,
+    add: Option<String>,
+    remove: Option<String>,
+) -> Result<Vec<String>, String> {
+    let mut cfg = config::load(&app).unwrap_or_default();
+
+    if let Some(entry) = add {
+        let entry = entry.trim().to_string();
+        if entry.is_empty() {
+            return Err("Enter an address like 192.168.0.42:9001.".into());
+        }
+        // Checked before it is stored, so a typo is refused while you are
+        // looking at it rather than logged quietly on the next restart.
+        net::resolve_v4(&entry).map_err(|e| format!("{e:#}"))?;
+        if !cfg.manual.contains(&entry) {
+            cfg.manual.push(entry);
+        }
+    }
+    if let Some(entry) = remove {
+        cfg.manual.retain(|e| *e != entry);
+    }
+
+    config::save(&app, &cfg).map_err(|e| format!("{e:#}"))?;
+
+    // Only rebind if it was already running; otherwise the list is simply
+    // saved for whenever Start is pressed.
+    let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+    if guard.is_some() {
+        *guard = None;
+        *guard = Some(
+            session::start(cfg.port, &cfg.peer, &cfg.manual, ptt.0.clone())
+                .map_err(|e| format!("{e:#}"))?,
+        );
+    }
+    Ok(cfg.manual)
 }
 
 /// Everyone discovered on the LAN, live or recently gone. Empty when the
@@ -180,7 +234,7 @@ pub fn run() {
         )
         .invoke_handler(tauri::generate_handler![
             greet, net_start, net_stop, net_stats, net_peers, local_name, config_get,
-            ptt_held, send_text, messages
+            ptt_held, send_text, messages, manual_peers
         ])
         .setup(move |app| {
             let show = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
@@ -231,7 +285,12 @@ pub fn run() {
             app.manage(Ptt(ptt.clone()));
 
             let session = match config::load(app.handle()) {
-                Some(cfg) => match session::start(cfg.port, &cfg.peer, ptt.clone()) {
+                Some(cfg) => match session::start(
+                    cfg.port,
+                    &cfg.peer,
+                    &cfg.manual,
+                    ptt.clone(),
+                ) {
                     Ok(s) => {
                         eprintln!("[net] auto-started on {} -> {}", cfg.port, cfg.peer);
                         Some(s)

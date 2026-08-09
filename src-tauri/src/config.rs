@@ -13,11 +13,22 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Config {
     pub port: u16,
     pub peer: String,
+    /// Addresses typed in by hand, kept alongside whatever mDNS finds.
+    ///
+    /// Discovery is not enough on its own: plenty of networks filter mDNS, a PC
+    /// on another subnet is never discovered, and v1 kept a hand-maintained
+    /// roster for exactly those reasons. A typed address is also the only fix
+    /// for the v1 case of a machine whose name would not resolve at all.
+    ///
+    /// `default` so a config written before this field existed still loads —
+    /// otherwise adding a setting would silently reset everyone's port.
+    #[serde(default)]
+    pub manual: Vec<String>,
 }
 
 fn path(app: &AppHandle) -> Result<PathBuf> {

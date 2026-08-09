@@ -82,6 +82,9 @@ export const useTransport = () => {
 		stats,
 		peers,
 		error,
+		// Exposed so sibling hooks can report through the one banner rather
+		// than each growing an error surface of its own.
+		setError,
 		start,
 		stop,
 		running: stats !== null

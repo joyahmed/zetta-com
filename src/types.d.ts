@@ -10,6 +10,10 @@ type NetStats = {
 
 type Saved = { port: string; peer: string };
 
+/// Mirrors the Rust side's transport.json. The transport reads this before any
+/// window exists, which is why it is not localStorage.
+type Config = { port: number; peer: string; manual: string[] };
+
 /// Someone found on the LAN. `live` goes false when nothing has been heard from
 /// them for a while — they stay in the roster rather than vanishing, because
 /// "was here, now gone" tells you more than a name quietly disappearing.
@@ -18,6 +22,9 @@ type Peer = {
 	name: string;
 	addr: string;
 	live: boolean;
+	/// Typed in rather than discovered. A manual entry that never goes live is a
+	/// wrong address; a discovered one that goes quiet is a switched-off PC.
+	manual: boolean;
 	/// Audio arrived from them in the last fraction of a second. With
 	/// push-to-talk, receiving audio *is* the fact that somebody is speaking —
 	/// no flag in the header could say it more reliably.
@@ -75,6 +82,9 @@ type AdvancedProps = {
 	onPort: (v: string) => void;
 	onPeer: (v: string) => void;
 	disabled: boolean;
+	manual: string[];
+	onAdd: (addr: string) => Promise<void>;
+	onRemove: (addr: string) => Promise<void>;
 };
 
 type DiagnosticsProps = {

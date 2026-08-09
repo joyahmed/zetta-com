@@ -29,6 +29,9 @@ pub struct Session {
     /// stopping the transport also makes us disappear from other rosters
     /// immediately rather than after a timeout.
     discovery: Option<Arc<discovery::Discovery>>,
+    /// Resolved once at start. Changing the list restarts the session, which is
+    /// simpler than mutating it live and happens rarely enough not to matter.
+    manual: Vec<discovery::Peer>,
     stop: Arc<AtomicBool>,
 }
 
@@ -92,15 +95,61 @@ impl Session {
             .as_ref()
             .map(|d| d.peers())
             .unwrap_or_default();
+
+        // Manual entries fill the gaps discovery leaves, and merge rather than
+        // duplicate: an address you typed that mDNS also found is one person,
+        // and showing them twice would make the roster lie about how many
+        // people are there.
+        for m in &self.manual {
+            match peers.iter_mut().find(|p| p.addr == m.addr) {
+                Some(existing) => existing.manual = true,
+                None => peers.push(m.clone()),
+            }
+        }
+
         for p in &mut peers {
             p.live = self.net.heard_within(p.addr, net::HEARD_TIMEOUT);
             p.talking = self.net.talking(p.addr);
         }
+        peers.sort_by(|a, b| a.name.cmp(&b.name));
         peers
     }
 }
 
-pub fn start(port: u16, peer: &str, transmit: Arc<AtomicBool>) -> Result<Session> {
+/// Turn typed addresses into peers.
+///
+/// Resolved to IPv4 literals here rather than kept as text, because a Windows
+/// PC name resolves IPv6-link-local first and anything taking the first address
+/// reaches nobody — the bug behind both of v1's "the text arrived and the voice
+/// did not" failures. One that will not resolve is dropped with a line saying
+/// so, rather than sitting in the roster looking reachable.
+fn manual_peers(manual: &[String]) -> Vec<discovery::Peer> {
+    manual
+        .iter()
+        .filter_map(|entry| match net::resolve_v4(entry) {
+            Ok(addr) => Some(discovery::Peer {
+                id: format!("manual:{entry}"),
+                name: entry.clone(),
+                addr,
+                live: false,
+                talking: false,
+                manual: true,
+            }),
+            Err(e) => {
+                eprintln!("[net] manual peer {entry}: {e:#}");
+                None
+            }
+        })
+        .collect()
+}
+
+pub fn start(
+    port: u16,
+    peer: &str,
+    manual_entries: &[String],
+    transmit: Arc<AtomicBool>,
+) -> Result<Session> {
+    let manual = manual_peers(manual_entries);
     let pipeline = audio::start(transmit)?;
     let net = Arc::new(net::start(port, peer, pipeline.frames_in.clone())?);
 
@@ -142,20 +191,26 @@ pub fn start(port: u16, peer: &str, transmit: Arc<AtomicBool>) -> Result<Session
     let sync_stop = stop.clone();
     let sync_net = net.clone();
     let sync_discovery = discovery.clone();
+    let sync_manual = manual.clone();
     thread::Builder::new()
         .name("roster-sync".into())
         .spawn(move || {
             while !sync_stop.load(Ordering::Relaxed) {
-                if let Some(d) = sync_discovery.as_ref() {
-                    let peers = d.peers();
-                    let known: Vec<_> = peers.iter().map(|p| p.addr).collect();
-                    let live: Vec<_> = peers
-                        .iter()
-                        .filter(|p| sync_net.heard_within(p.addr, net::HEARD_TIMEOUT))
-                        .map(|p| p.addr)
-                        .collect();
-                    sync_net.set_targets(known, live);
+                let mut known: Vec<_> = sync_discovery
+                    .as_ref()
+                    .map(|d| d.peers().into_iter().map(|p| p.addr).collect())
+                    .unwrap_or_else(Vec::new);
+                for m in &sync_manual {
+                    if !known.contains(&m.addr) {
+                        known.push(m.addr);
+                    }
                 }
+                let live: Vec<_> = known
+                    .iter()
+                    .copied()
+                    .filter(|a| sync_net.heard_within(*a, net::HEARD_TIMEOUT))
+                    .collect();
+                sync_net.set_targets(known, live);
                 thread::sleep(Duration::from_secs(1));
             }
         })?;
@@ -164,6 +219,7 @@ pub fn start(port: u16, peer: &str, transmit: Arc<AtomicBool>) -> Result<Session
         _audio: pipeline.handle,
         net,
         discovery,
+        manual,
         stop,
     })
 }

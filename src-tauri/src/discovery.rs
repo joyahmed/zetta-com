@@ -43,6 +43,10 @@ pub struct Peer {
     /// Set by the session from the socket, not by discovery: audio arriving is
     /// what "talking" means, and mDNS has nothing to say about it.
     pub talking: bool,
+    /// Typed in by hand rather than discovered. Worth showing: a manual entry
+    /// that never goes live is a wrong address, where a discovered one that
+    /// goes quiet is a switched-off PC, and those want different reactions.
+    pub manual: bool,
 }
 
 struct Entry {
@@ -185,6 +189,7 @@ pub fn start(port: u16) -> Result<Discovery> {
                                     addr,
                                     live: true,
                                     talking: false,
+                                    manual: false,
                                 },
                                 seen: Instant::now(),
                             },

@@ -363,7 +363,7 @@ fn stamped_within(
 /// A Windows PC name resolves IPv6-link-local first, and anything that takes
 /// the first address reaches nobody. Both of v1's "text arrived but voice did
 /// not" failures were this, on the sending side.
-fn resolve_v4(peer: &str) -> Result<SocketAddr> {
+pub fn resolve_v4(peer: &str) -> Result<SocketAddr> {
     peer.to_socket_addrs()
         .with_context(|| format!("resolving {peer}"))?
         .find(SocketAddr::is_ipv4)

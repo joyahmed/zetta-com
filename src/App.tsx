@@ -6,6 +6,7 @@ import { Messages } from './components/Messages';
 import { Roster } from './components/Roster';
 import { TalkBar } from './components/TalkBar';
 import { useLocalName } from './hooks/useLocalName';
+import { useManualPeers } from './hooks/useManualPeers';
 import { useMessages } from './hooks/useMessages';
 import { usePtt } from './hooks/usePtt';
 import { useTransport } from './hooks/useTransport';
@@ -21,11 +22,13 @@ const App = () => {
 		stats,
 		peers,
 		error,
+		setError,
 		start,
 		stop,
 		running
 	} = useTransport();
 	const { messages, send } = useMessages(running);
+	const { manual, add, remove } = useManualPeers(setError);
 
 	return (
 		<main className='min-h-screen bg-slate-50 px-6 py-8 text-slate-900 dark:bg-slate-950 dark:text-slate-100'>
@@ -76,6 +79,9 @@ const App = () => {
 						onPort={setPort}
 						onPeer={setPeer}
 						disabled={running}
+						manual={manual}
+						onAdd={add}
+						onRemove={remove}
 					/>
 				</Disclosure>
 
