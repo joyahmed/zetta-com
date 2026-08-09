@@ -116,6 +116,14 @@ impl Session {
         for p in &mut peers {
             p.live = self.net.heard_within(p.addr, net::HEARD_TIMEOUT);
             p.talking = self.net.talking(p.addr);
+            // A name learned from a heartbeat beats the address a manual entry
+            // starts out labelled with. Discovered peers already have a name
+            // and keep it, since that one came with the advertisement.
+            if p.manual {
+                if let Some(name) = self.net.name_of(p.addr) {
+                    p.name = name;
+                }
+            }
         }
         peers.sort_by(|a, b| a.name.cmp(&b.name));
         peers
@@ -168,7 +176,12 @@ pub fn start(
     let manual = manual_peers(&entries);
 
     let pipeline = audio::start(transmit)?;
-    let net = Arc::new(net::start(port, peer, pipeline.frames_in.clone())?);
+    let net = Arc::new(net::start(
+        port,
+        peer,
+        &discovery::local_name(),
+        pipeline.frames_in.clone(),
+    )?);
 
     let stop = Arc::new(AtomicBool::new(false));
     let pump_stop = stop.clone();

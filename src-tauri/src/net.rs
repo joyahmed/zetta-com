@@ -168,6 +168,14 @@ pub struct Handle {
     /// while after it is switched off, and a roster that claims someone can
     /// hear you when they cannot is worse than no roster at all.
     heard: Arc<Mutex<HashMap<SocketAddr, Instant>>>,
+    /// Machine names learned from heartbeats, by address.
+    ///
+    /// Discovery supplies names for peers it finds, but a hand-entered address
+    /// has nobody to ask — it would sit in the roster as "192.168.0.42:9001",
+    /// which is not a thing you can tell somebody to talk to. The heartbeat
+    /// already goes to everyone; carrying the name in it costs a few bytes
+    /// every two seconds and means every peer has a name however it was found.
+    names: Arc<Mutex<HashMap<SocketAddr, String>>>,
     /// When audio — as opposed to a heartbeat — last arrived from each address.
     ///
     /// This is how the UI knows who is speaking, and it needs no flag in the
@@ -279,6 +287,15 @@ impl Handle {
     /// be stale between polls the way a swept flag can.
     pub fn heard_within(&self, addr: SocketAddr, within: Duration) -> bool {
         stamped_within(&self.heard, addr, within)
+    }
+
+    /// The name a machine calls itself, if it has told us.
+    pub fn name_of(&self, addr: SocketAddr) -> Option<String> {
+        let map = match self.names.lock() {
+            Ok(m) => m,
+            Err(e) => e.into_inner(),
+        };
+        map.get(&addr).cloned()
     }
 
     /// Whether audio arrived from this address recently enough to call them
@@ -512,6 +529,7 @@ impl Jitter {
 pub fn start(
     port: u16,
     peer: &str,
+    local_name: &str,
     audio_in: SyncSender<(SocketAddr, Option<Vec<u8>>)>,
 ) -> Result<Handle> {
     // An address is optional now. Discovery supplies peers on a normal network;
@@ -551,6 +569,7 @@ pub fn start(
     let heard: Arc<Mutex<HashMap<SocketAddr, Instant>>> = Arc::new(Mutex::new(HashMap::new()));
     let last_audio: Arc<Mutex<HashMap<SocketAddr, Instant>>> =
         Arc::new(Mutex::new(HashMap::new()));
+    let names: Arc<Mutex<HashMap<SocketAddr, String>>> = Arc::new(Mutex::new(HashMap::new()));
     let messages: Arc<Mutex<VecDeque<Message>>> = Arc::new(Mutex::new(VecDeque::new()));
     let message_id = Arc::new(AtomicU64::new(1));
 
@@ -568,13 +587,19 @@ pub fn start(
     let hb_sock = socket.try_clone().context("cloning socket for heartbeat")?;
     let hb_stop = stop.clone();
     let hb_targets = targets.clone();
+    let local_name = local_name.to_string();
     thread::Builder::new()
         .name("net-heartbeat".into())
         .spawn(move || {
             // Its own sequence space, fixed at zero: heartbeats must not
             // advance the audio sequence, or the receiver's reorder window
             // would see gaps that never existed.
-            let mut buf = [0u8; HEADER_LEN];
+            //
+            // The payload is this machine's name, so a peer that was typed in
+            // by hand still ends up with something a human can read.
+            let name = local_name.as_bytes();
+            let n = name.len().min(MAX_PAYLOAD);
+            let mut buf = [0u8; HEADER_LEN + MAX_PAYLOAD];
             Header {
                 ver: VER,
                 kind: KIND_HEARTBEAT,
@@ -582,6 +607,8 @@ pub fn start(
                 ts: 0,
             }
             .write(&mut buf);
+            buf[HEADER_LEN..HEADER_LEN + n].copy_from_slice(&name[..n]);
+            let buf = &buf[..HEADER_LEN + n];
 
             while !hb_stop.load(Ordering::Relaxed) {
                 // To everyone known, not only everyone live. Two instances
@@ -595,7 +622,7 @@ pub fn start(
                     t.known.clone()
                 };
                 for addr in known {
-                    if let Err(e) = hb_sock.send_to(&buf, addr) {
+                    if let Err(e) = hb_sock.send_to(buf, addr) {
                         eprintln!("[net] heartbeat to {addr} failed: {e}");
                     }
                 }
@@ -607,6 +634,7 @@ pub fn start(
     let rx_counters = counters.clone();
     let rx_heard = heard.clone();
     let rx_last_audio = last_audio.clone();
+    let rx_names = names.clone();
     let rx_messages = messages.clone();
     // Shared with the Handle rather than a second counter, so sent and received
     // lines interleave in the order they actually happened.
@@ -640,6 +668,19 @@ pub fn start(
                     Err(e) => e.into_inner(),
                 };
                 map.insert(from, Instant::now());
+            }
+
+            // A heartbeat carries the sender's machine name, which is how a
+            // hand-entered address ends up with something readable beside it.
+            if h.kind == KIND_HEARTBEAT && len > HEADER_LEN {
+                let name = String::from_utf8_lossy(&buf[HEADER_LEN..len]).to_string();
+                if !name.is_empty() {
+                    let mut map = match rx_names.lock() {
+                        Ok(m) => m,
+                        Err(e) => e.into_inner(),
+                    };
+                    map.insert(from, name);
+                }
             }
 
             rx_counters.rx.fetch_add(1, Ordering::Relaxed);
@@ -718,6 +759,7 @@ pub fn start(
         ts: AtomicU64::new(0),
         targets,
         target: Arc::new(Mutex::new(None)),
+        names,
         heard,
         last_audio,
         messages,

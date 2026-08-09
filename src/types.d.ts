@@ -79,6 +79,7 @@ type StatProps = { label: string; value?: number; warn?: boolean };
 type DotProps = { on: boolean };
 
 type PeerRowProps = {
+	slot?: number;
 	peer: Peer;
 	selected: boolean;
 	onSelect: () => void;

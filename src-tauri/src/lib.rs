@@ -39,6 +39,24 @@ enum Action {
     Talk,
     /// Fires a canned message.
     Preset(String),
+    /// Hold to talk to one machine: the roster entry at this position, counting
+    /// from 1. Releasing stops transmitting and leaves the target where it is,
+    /// so the next thing you type goes to the same person you just spoke to.
+    TalkTo(usize),
+    /// Aim at that machine and bring the window up ready to type.
+    MessageTo(usize),
+}
+
+/// The roster entry at a one-based position, in the order the UI shows them.
+///
+/// Position rather than name, because the keys have to be registered at launch
+/// and the roster does not exist yet — nobody has been discovered. It also
+/// means the keys keep working when somebody's PC is renamed.
+fn peer_at(app: &tauri::AppHandle, slot: usize) -> Option<discovery::Peer> {
+    let state = app.state::<NetState>();
+    let guard = state.0.lock().ok()?;
+    let peers = guard.as_ref()?.peers();
+    peers.into_iter().nth(slot.checked_sub(1)?)
 }
 
 /// The registered shortcuts and what each one means, shared with the handler.
@@ -326,12 +344,51 @@ pub fn run() {
                         // every canned message twice.
                         Action::Preset(text) => {
                             if matches!(event.state(), ShortcutState::Pressed) {
-                                if let Some(s) =
-                                    app.state::<NetState>().0.lock().ok().and_then(|g| {
-                                        g.as_ref().map(|s| s.send_text(&text))
-                                    })
-                                {
-                                    let _ = s;
+                                if let Ok(g) = app.state::<NetState>().0.lock() {
+                                    if let Some(s) = g.as_ref() {
+                                        s.send_text(&text);
+                                    }
+                                }
+                            }
+                        }
+                        // Aim, then talk, for as long as it is held. Aiming on
+                        // press rather than on release means the very first
+                        // frame already goes to the right person.
+                        Action::TalkTo(slot) => {
+                            let pressed = matches!(event.state(), ShortcutState::Pressed);
+                            if pressed {
+                                match peer_at(app, slot) {
+                                    Some(p) => {
+                                        if let Ok(g) = app.state::<NetState>().0.lock() {
+                                            if let Some(s) = g.as_ref() {
+                                                s.set_target(Some(p.addr));
+                                            }
+                                        }
+                                        eprintln!("[keys] talking to {}", p.name);
+                                    }
+                                    None => {
+                                        // Nobody in that slot: say so rather
+                                        // than opening the microphone to
+                                        // whoever happens to be selected.
+                                        eprintln!("[keys] no PC at position {slot}");
+                                        return;
+                                    }
+                                }
+                            }
+                            ptt_for_handler.store(pressed, Ordering::Relaxed);
+                        }
+                        Action::MessageTo(slot) => {
+                            if matches!(event.state(), ShortcutState::Pressed) {
+                                match peer_at(app, slot) {
+                                    Some(p) => {
+                                        if let Ok(g) = app.state::<NetState>().0.lock() {
+                                            if let Some(s) = g.as_ref() {
+                                                s.set_target(Some(p.addr));
+                                            }
+                                        }
+                                        reveal(app);
+                                    }
+                                    None => eprintln!("[keys] no PC at position {slot}"),
                                 }
                             }
                         }
@@ -394,6 +451,29 @@ pub fn run() {
                     &bindings,
                     &p.shortcut,
                     Action::Preset(p.text.clone()),
+                );
+            }
+
+            // A key per position in the roster. Ctrl+Alt+N holds to talk to
+            // that machine; Ctrl+Shift+N aims at it and opens the window ready
+            // to type. Nine of each, which is as many as a row of number keys
+            // gives and more people than one person directs at once.
+            //
+            // Bound to a position rather than to a name because the keys are
+            // registered at launch, when nobody has been discovered yet — and
+            // because a position keeps working when a PC is renamed.
+            for slot in 1..=9usize {
+                bind(
+                    &handle,
+                    &bindings,
+                    &format!("CommandOrControl+Alt+Digit{slot}"),
+                    Action::TalkTo(slot),
+                );
+                bind(
+                    &handle,
+                    &bindings,
+                    &format!("CommandOrControl+Shift+Digit{slot}"),
+                    Action::MessageTo(slot),
                 );
             }
             app.manage(Ptt(ptt.clone()));

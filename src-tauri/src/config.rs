@@ -105,7 +105,14 @@ pub fn load(app: &AppHandle) -> Option<Config> {
     let p = path(app).ok()?;
     let raw = fs::read_to_string(&p).ok()?;
     match serde_json::from_str::<Config>(&raw) {
-        Ok(c) => Some(c),
+        Ok(mut c) => {
+            // Drop the pleasantries an earlier build shipped. Removing them
+            // from the defaults did nothing for anyone who had already run it,
+            // because they were written to disk on the first successful bind.
+            c.presets
+                .retain(|p| !matches!(p.text.as_str(), "On my way" | "Lunch?" | "Call me"));
+            Some(c)
+        }
         Err(e) => {
             eprintln!("[config] ignoring unreadable {}: {e}", p.display());
             None
