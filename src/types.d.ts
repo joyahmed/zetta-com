@@ -128,4 +128,11 @@ type ShortcutInfo = {
 
 type ShortcutsProps = { shortcuts: ShortcutInfo[] };
 
+type ModalProps = {
+	title: string;
+	open: boolean;
+	onClose: () => void;
+	children: React.ReactNode;
+};
+
 type AlertProps = { message: string };

@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "zetta-com",
+  "productName": "Zetta Com",
   "version": "0.1.0",
   "identifier": "com.joy.zetta-com",
   "build": {
@@ -12,9 +12,11 @@
   "app": {
     "windows": [
       {
-        "title": "zetta-com",
-        "width": 800,
-        "height": 600
+        "title": "Zetta Com",
+        "width": 460,
+        "height": 720,
+        "minWidth": 380,
+        "minHeight": 520
       }
     ],
     "security": {

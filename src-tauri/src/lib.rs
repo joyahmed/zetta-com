@@ -53,6 +53,10 @@ enum Action {
     AddPc,
     /// Show the list of every key and what it does.
     ShowShortcuts,
+    /// Bring the window up from the tray. v1 stamped this on a Start Menu
+    /// shortcut and let Explorer dispatch it; here it is a real global key, so
+    /// it works whether or not anything is pinned.
+    ShowWindow,
 }
 
 /// One row of the shortcut list the UI shows.
@@ -487,6 +491,11 @@ pub fn run() {
                                 let _ = app.emit("show-shortcuts", ());
                             }
                         }
+                        Action::ShowWindow => {
+                            if matches!(event.state(), ShortcutState::Pressed) {
+                                reveal(app);
+                            }
+                        }
                     }
                 })
                 .build(),
@@ -589,6 +598,14 @@ pub fn run() {
                 "Show shortcuts",
                 "CommandOrControl+Alt+KeyK",
                 Action::ShowShortcuts,
+            );
+            bind(
+                &handle,
+                &bindings,
+                &listing,
+                "Open the window",
+                "CommandOrControl+Alt+KeyT",
+                Action::ShowWindow,
             );
 
             // A key per position in the roster. Ctrl+Alt+N holds to talk to
