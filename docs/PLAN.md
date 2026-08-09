@@ -120,21 +120,24 @@ playback ← ring B ← mixer ◄── per-peer decoders ◄── net rx
 Sequenced so the riskiest thing is proven first, and every slice runs and shows
 something before the next one starts.
 
-> ### ▶ Next: **3c — heartbeat and timeout**
+> ### ▶ Next: **3d — fan-out to everyone**
 >
-> Make `live` mean something. A peer is currently live because mDNS mentioned it,
-> which stays true for a while after a PC is switched off. A heartbeat on
-> `kind=2` every couple of seconds, and a peer that misses its window goes grey.
+> The last step where the app still talks to one address. Send each encoded
+> frame to every live peer, and give each remote talker its own Opus decoder and
+> its own reorder window — decoder state is a running conversation with one
+> encoder, so sharing one across peers produces garbage. A mixer sums them into
+> the playback ring.
 >
-> After that: **3d**, fan-out to every live peer, which is where selecting a
-> single peer stops existing.
+> **Selecting a single peer stops existing here**, and with it the address field.
+>
+> After that step 3 is done and step 4 is push-to-talk.
 
 | Step | | |
 |---|---|---|
 | 0 | Skeleton | ✅ done |
 | 1 | Audio loopback in-process | ✅ done |
 | 2 | Transport | ✅ done |
-| 3 | Discovery and presence | ◐ 3a ✅ 3b ✅ · **3c next** · 3d |
+| 3 | Discovery and presence | ◐ 3a ✅ 3b ✅ 3c ✅ · **3d next** |
 | 4 | Push-to-talk | ☐ |
 | 5 | Text and notifications | ☐ |
 | 6 | Packaging | ☐ |
@@ -175,10 +178,12 @@ and playback made independently optional; and the transport auto-starting from
 
 - [x] **3a** `mdns-sd` advertise and browse; peers appear and vanish in the log.
 - [x] **3b** Roster in the UI, with the address behind Advanced.
-- [ ] **3c** ← **next.** Heartbeat on `kind=2` and a timeout, so `live` means
-      "answered recently" rather than "mDNS mentioned it once".
-- [ ] **3d** Fan-out to every live peer; per-peer decoder, per-peer jitter
-      buffer, mixer. **Selecting a single peer stops existing here.**
+- [x] **3c** Heartbeat on `kind=2` every two seconds, and a seven-second
+      timeout. `live` now means "heard from recently" rather than "mDNS
+      mentioned it once" — mDNS answers who exists, the socket answers who is
+      present.
+- [ ] **3d** ← **next.** Fan-out to every live peer; per-peer decoder, per-peer
+      jitter buffer, mixer. **Selecting a single peer stops existing here.**
 - [ ] Peers added by hand, merged with discovered ones (#12).
 
 *Done when:* a second instance appears within a couple of seconds and greys out
