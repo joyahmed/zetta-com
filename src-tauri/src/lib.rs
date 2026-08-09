@@ -1,4 +1,5 @@
 mod audio;
+mod config;
 mod net;
 mod session;
 
@@ -24,13 +25,32 @@ struct NetState(Mutex<Option<session::Session>>);
 /// anyhow's error type is not serialisable across the IPC boundary. The
 /// conversion belongs here, at the edge, not inside `net`.
 #[tauri::command]
-fn net_start(state: State<NetState>, port: u16, peer: String) -> Result<(), String> {
+fn net_start(
+    app: tauri::AppHandle,
+    state: State<NetState>,
+    port: u16,
+    peer: String,
+) -> Result<(), String> {
     let mut guard = state.0.lock().map_err(|e| e.to_string())?;
     // Drop any existing transport before binding, or starting on the same port
     // fails with "address already in use" against ourselves.
     *guard = None;
     *guard = Some(session::start(port, &peer).map_err(|e| format!("{e:#}"))?);
+
+    // Saved only after a successful bind, so a setting that cannot work is
+    // never the one restored at next launch.
+    if let Err(e) = config::save(&app, &config::Config { port, peer }) {
+        eprintln!("[config] not saved: {e:#}");
+    }
     Ok(())
+}
+
+/// What the app will auto-start with, or `None` if it has never been
+/// configured. The UI reads this to fill its fields rather than keeping its own
+/// copy, so there is one source of truth for what this machine does.
+#[tauri::command]
+fn config_get(app: tauri::AppHandle) -> Option<config::Config> {
+    config::load(&app)
 }
 
 #[tauri::command]
@@ -58,7 +78,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
-            greet, net_start, net_stop, net_stats
+            greet, net_start, net_stop, net_stats, config_get
         ])
         .setup(|app| {
             let show = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
@@ -87,15 +107,33 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // Audio no longer starts here. It starts and stops with the
-            // session, because opening the microphone is not something an app
-            // should do at launch and then hold forever — and because with the
-            // loopback cut, audio with no transport has nowhere to go.
+            // Auto-start from the saved settings. A PC whose job is to listen
+            // must come up receiving without anyone clicking anything: it may
+            // be in another room, it may have no microphone, and it may have
+            // nobody sitting at it. Requiring a button press made a listener
+            // depend on a person, which is the one thing v1 got right.
             //
-            // The transport is started from the UI, deliberately with no
-            // environment-variable fallback: two ways to configure one thing
-            // guarantees an afternoon spent on "why is it using the other port".
-            app.manage(NetState(Mutex::new(None)));
+            // Settings deliberately come from disk rather than the webview's
+            // localStorage, because binding has to happen before any window has
+            // loaded, and from a file rather than the environment, because two
+            // ways to configure one thing guarantees an afternoon spent on
+            // "why is it using the other port".
+            let session = match config::load(app.handle()) {
+                Some(cfg) => match session::start(cfg.port, &cfg.peer) {
+                    Ok(s) => {
+                        eprintln!("[net] auto-started on {} -> {}", cfg.port, cfg.peer);
+                        Some(s)
+                    }
+                    Err(e) => {
+                        // Not fatal: the window still opens, stopped, so the
+                        // settings can be corrected by hand.
+                        eprintln!("[net] auto-start failed: {e:#}");
+                        None
+                    }
+                },
+                None => None,
+            };
+            app.manage(NetState(Mutex::new(session)));
 
             Ok(())
         })
