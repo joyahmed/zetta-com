@@ -17,18 +17,24 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Apple silicon and Intel are separate binaries, not one build with a
-          # flag. A universal binary is possible but doubles the download for
-          # everybody to spare one group a choice.
+          # Apple silicon only. There was an Intel job here on `macos-13`,
+          # built natively rather than cross-compiled because libopus is C
+          # built by autotools and cross-compiling it means fighting configure
+          # over host triples and arch flags.
           #
-          # Each is built on its own hardware rather than cross-compiled from
-          # one runner. libopus is C built by autotools, and cross-compiling it
-          # means fighting configure over host triples and arch flags — where
-          # macos-13 is Intel and builds x86_64 natively for free.
+          # It was removed because it stopped being scheduled at all. GitHub is
+          # retiring the Intel macOS image, and a job asking for `macos-13` now
+          # sits queued rather than failing — 1h28m with no runner assigned and
+          # no steps started, while the other three finished in under five
+          # minutes each. A job that never fails and never runs holds the whole
+          # release open, and a draft release cannot be published until every
+          # platform has landed.
+          #
+          # If Intel is wanted back: build `--target universal-apple-darwin` on
+          # the arm64 runner. That trades a stuck job for the autotools
+          # cross-compile fight, and doubles the download for everyone.
           - platform: macos-latest
             args: --target aarch64-apple-darwin
-          - platform: macos-13
-            args: --target x86_64-apple-darwin
           - platform: ubuntu-latest
             args: ''
           - platform: windows-latest
@@ -70,9 +76,9 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@stable
         with:
-          # Only the mac runners need the extra triples; asking for them
-          # elsewhere is a download nobody uses.
-          targets: ${{ startsWith(matrix.platform, 'macos') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          # Only the mac runner needs the extra triple; asking for it elsewhere
+          # is a download nobody uses.
+          targets: ${{ startsWith(matrix.platform, 'macos') && 'aarch64-apple-darwin' || '' }}
 
       # Keyed on the platform and the lockfile, so a dependency change busts it
       # and a source change does not. The first build is slow; the rest are not.
