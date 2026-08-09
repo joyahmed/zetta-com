@@ -456,8 +456,18 @@ fn build_capture(
     out_tx: SyncSender<Frame>,
 ) -> Result<cpal::Stream> {
     let hz = cfg.sample_rate();
-    let frame = (hz / 50) as usize; // 20 ms
-    let rate = opus_rate(hz)?;
+    // What Opus will be fed. Equal to the device rate on a device that offers
+    // an Opus rate, which is the common case and costs nothing.
+    let opus_hz = if OPUS_RATES.contains(&hz) {
+        hz
+    } else {
+        nearest_opus(hz)
+    };
+    // Ring A holds device-rate samples; the encoder consumes a device-rate
+    // 20 ms and produces an Opus-rate 20 ms.
+    let frame = (hz / 50) as usize; // 20 ms at the device rate
+    let opus_frame = (opus_hz / 50) as usize; // 20 ms at the Opus rate
+    let rate = opus_rate(opus_hz)?;
     let ch = cfg.channels() as usize;
     let stream_cfg = cfg.config();
 
@@ -527,7 +537,11 @@ fn build_capture(
         // Sized for the worst case, sliced to the real frame. Allocated once,
         // outside the loop, so the loop itself never allocates.
         let mut pcm = [0i16; MAX_FRAME];
+        let mut resampled = [0i16; MAX_FRAME];
         let mut packet = [0u8; MAX_PACKET];
+        // None when the device already runs at an Opus rate, so the common path
+        // has no resampling in it at all.
+        let mut rs = (hz != opus_hz).then(|| Resampler::new(hz, opus_hz));
 
         while !enc_stop.load(Ordering::Relaxed) && !enc_generation.load(Ordering::Relaxed) {
             let have = cons.occupied_len();
@@ -545,7 +559,20 @@ fn build_capture(
                 continue;
             }
 
-            let n = match enc.encode(&pcm[..frame], &mut packet) {
+            // Opus will only accept exactly 20 ms at its own rate, so a short
+            // resample is padded rather than encoded at the wrong length.
+            let payload: &[i16] = match rs.as_mut() {
+                None => &pcm[..frame],
+                Some(r) => {
+                    let n = r.process(&pcm[..frame], &mut resampled[..opus_frame]);
+                    for s in resampled.iter_mut().take(opus_frame).skip(n) {
+                        *s = 0;
+                    }
+                    &resampled[..opus_frame]
+                }
+            };
+
+            let n = match enc.encode(payload, &mut packet) {
                 Ok(n) => n,
                 Err(e) => {
                     eprintln!("[audio] encode: {e}");
@@ -557,9 +584,13 @@ fn build_capture(
             // try_send, not send: a full channel means the network side has
             // stalled, and blocking here would back the stall up into the
             // capture ring and then into dropped microphone samples.
+            // The Opus-rate count, not the device-rate one. This travels in the
+            // packet header as the timestamp increment, and the receiver has no
+            // idea what rate the sender's microphone runs at — only what was
+            // encoded.
             let _ = out_tx.try_send(Frame {
                 data: packet[..n].to_vec(),
-                samples: frame as u32,
+                samples: opus_frame as u32,
             });
         }
     })?;
@@ -579,8 +610,17 @@ fn build_playback(
     in_rx: SharedFrames,
 ) -> Result<cpal::Stream> {
     let hz = cfg.sample_rate();
-    let frame = (hz / 50) as usize;
-    let rate = opus_rate(hz)?;
+    // Decode at an Opus rate, then resample up or down to whatever the speakers
+    // actually run at. Ring B holds device-rate samples, so the real-time
+    // callback stays exactly as simple as it was.
+    let opus_hz = if OPUS_RATES.contains(&hz) {
+        hz
+    } else {
+        nearest_opus(hz)
+    };
+    let frame = (hz / 50) as usize; // 20 ms at the device rate
+    let opus_frame = (opus_hz / 50) as usize; // 20 ms at the Opus rate
+    let rate = opus_rate(opus_hz)?;
     let ch = cfg.channels() as usize;
     let stream_cfg = cfg.config();
 
@@ -706,6 +746,9 @@ fn build_playback(
         let mut sources: HashMap<SocketAddr, (Decoder, Vec<i16>)> = HashMap::new();
         let mut out = [0i16; MAX_FRAME];
         let mut mixed = [0i32; MAX_FRAME];
+        let mut speakers = [0i16; MAX_FRAME];
+        // None when the speakers already run at an Opus rate.
+        let mut rs = (hz != opus_hz).then(|| Resampler::new(opus_hz, hz));
 
         while !dec_stop.load(Ordering::Relaxed) && !dec_generation.load(Ordering::Relaxed) {
             // Timed out rather than blocking, so the thread notices the stop
@@ -738,8 +781,8 @@ fn build_playback(
             // what converts the rate: libopus resamples internally, so nothing
             // here has to, and the two machines never have to agree on a rate.
             let decoded = match &packet {
-                Some(p) => entry.0.decode(Some(&p[..]), &mut out[..frame], false),
-                None => entry.0.decode(None::<&[u8]>, &mut out[..frame], false),
+                Some(p) => entry.0.decode(Some(&p[..]), &mut out[..opus_frame], false),
+                None => entry.0.decode(None::<&[u8]>, &mut out[..opus_frame], false),
             };
             match decoded {
                 Ok(got) => entry.1.extend_from_slice(&out[..got]),
@@ -751,26 +794,41 @@ fn build_playback(
             // push-to-talk exists, and two people overlapping must sound like
             // two people rather than like corruption.
             loop {
-                let ready = sources.values().filter(|(_, q)| q.len() >= frame).count();
+                let ready = sources
+                    .values()
+                    .filter(|(_, q)| q.len() >= opus_frame)
+                    .count();
                 if ready == 0 {
                     break;
                 }
-                mixed[..frame].fill(0);
+                mixed[..opus_frame].fill(0);
                 for (_, q) in sources.values_mut() {
-                    if q.len() < frame {
+                    if q.len() < opus_frame {
                         continue;
                     }
-                    for (m, s) in mixed[..frame].iter_mut().zip(q.drain(..frame)) {
+                    for (m, s) in mixed[..opus_frame].iter_mut().zip(q.drain(..opus_frame)) {
                         *m += s as i32;
                     }
                 }
                 // Sum in i32 and clamp once. Summing in i16 would wrap, and a
                 // wrap is heard as a crack far louder than the clipping it
                 // replaces.
-                for (o, m) in out[..frame].iter_mut().zip(&mixed[..frame]) {
+                for (o, m) in out[..opus_frame].iter_mut().zip(&mixed[..opus_frame]) {
                     *o = (*m).clamp(i16::MIN as i32, i16::MAX as i32) as i16;
                 }
-                prod.push_slice(&out[..frame]);
+
+                // Mixed at the Opus rate, played at the device rate. Resampling
+                // after the mix rather than per source does the work once
+                // however many people are talking.
+                match rs.as_mut() {
+                    None => {
+                        prod.push_slice(&out[..opus_frame]);
+                    }
+                    Some(r) => {
+                        let n = r.process(&out[..opus_frame], &mut speakers[..frame]);
+                        prod.push_slice(&speakers[..n]);
+                    }
+                }
             }
         }
     })?;
@@ -822,6 +880,85 @@ fn select(
             eprintln!("[audio] {e:#}");
             None
         }
+    }
+}
+
+/// The Opus rate to run at for a device that does not offer one itself.
+///
+/// The nearest at or below the device's rate, so we never invent bandwidth the
+/// microphone never captured — 44.1 kHz becomes 24 kHz rather than 48 kHz.
+/// Speech is entirely intelligible at 24 kHz and this halves the work.
+fn nearest_opus(hz: u32) -> u32 {
+    OPUS_RATES
+        .iter()
+        .copied()
+        .find(|&r| r <= hz)
+        .unwrap_or(OPUS_RATES[OPUS_RATES.len() - 1])
+}
+
+/// Linear resampling between a device's rate and an Opus rate.
+///
+/// Needed because WASAPI shared mode accepts only the device's mix format, and
+/// plenty of machines mix at 44.1 kHz — a rate Opus does not have. Without this
+/// the whole direction was discarded: `pick` returned an error, `select` turned
+/// that into `None`, and a PC with a 44.1 kHz microphone silently could not
+/// talk at all. Being heard slightly imperfectly beats not being heard.
+///
+/// Linear, and deliberately so. A sinc resampler is audibly better on music and
+/// close to inaudible on 32 kbps speech that has been through Opus, and it
+/// would cost a dependency, a fixed block size to design the rings around, and
+/// latency. This runs on the encoder and decoder threads, never in a real-time
+/// callback.
+///
+/// `pos` persists across calls. Resetting it per chunk would put a
+/// discontinuity at every buffer boundary — fifty clicks a second.
+struct Resampler {
+    ratio: f64,
+    pos: f64,
+    last: i16,
+}
+
+impl Resampler {
+    fn new(from_hz: u32, to_hz: u32) -> Self {
+        Self {
+            ratio: from_hz as f64 / to_hz as f64,
+            pos: 0.0,
+            last: 0,
+        }
+    }
+
+    /// Fills `out` from `input`, which must hold one chunk's worth at the
+    /// source rate. Returns how many samples were written.
+    fn process(&mut self, input: &[i16], out: &mut [i16]) -> usize {
+        if input.is_empty() {
+            return 0;
+        }
+        let last = input.len() - 1;
+        let mut written = 0;
+        for slot in out.iter_mut() {
+            let i = self.pos.floor() as usize;
+            if i > last {
+                break;
+            }
+            let frac = self.pos - i as f64;
+            let a = input[i] as f64;
+            // At the final sample there is no next one yet, so hold it rather
+            // than stopping short. Stopping short left the caller a sample
+            // under a full frame, which it then padded with a zero — a
+            // discontinuity fifty times a second. Holding is inaudible.
+            let b = input[if i < last { i + 1 } else { last }] as f64;
+            *slot = (a + (b - a) * frac) as i16;
+            self.pos += self.ratio;
+            written += 1;
+        }
+        // Carry the fraction into the next chunk. Resetting to zero would put a
+        // fractional jump at every buffer boundary and slowly drift the rate.
+        self.pos -= input.len() as f64;
+        if self.pos < 0.0 {
+            self.pos = 0.0;
+        }
+        self.last = input[last];
+        written
     }
 }
 
@@ -904,6 +1041,26 @@ fn pick(device: &Device, input: bool) -> Result<SupportedStreamConfig> {
         }
     }
 
+    // Nothing at an Opus rate. Take the device's own default and resample
+    // around it rather than refusing the device — this is the 44.1 kHz case,
+    // and returning an error here meant a PC with a 44.1 kHz microphone could
+    // not talk at all, reported once at startup and silent forever after.
+    let fallback = if input {
+        device.default_input_config().ok()
+    } else {
+        device.default_output_config().ok()
+    };
+    if let Some(cfg) = fallback {
+        if USABLE_FORMATS.contains(&cfg.sample_format()) {
+            eprintln!(
+                "[audio] {which} runs at {}Hz, resampling to {}Hz for Opus",
+                cfg.sample_rate(),
+                nearest_opus(cfg.sample_rate())
+            );
+            return Ok(cfg);
+        }
+    }
+
     let offered: Vec<String> = ranges
         .iter()
         .map(|r| {
@@ -917,7 +1074,7 @@ fn pick(device: &Device, input: bool) -> Result<SupportedStreamConfig> {
         })
         .collect();
     Err(anyhow!(
-        "{which} device offers no usable config (needs F32 or I16 at 48/24/16/12/8 kHz); it offers: {}",
+        "{which} device offers no usable config (needs F32 or I16); it offers: {}",
         offered.join(", ")
     ))
 }
