@@ -26,6 +26,7 @@ cpal = "0.18.1"
 ringbuf = "0.5.1"
 audiopus = "0.2.0"
 anyhow = "1.0.104"
+mdns-sd = "0.20.3"
 
 # Not used directly. cpal 0.18.1 declares `windows` and `windows-core` as two
 # independent ">=0.61, <=0.62" ranges. Tauri holds `windows` at 0.61, nothing

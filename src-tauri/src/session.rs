@@ -18,12 +18,17 @@ use std::time::Duration;
 use anyhow::Result;
 
 use crate::audio;
+use crate::discovery;
 use crate::net;
 
 pub struct Session {
     /// Held only to keep the audio pipeline alive; it stops when dropped.
     _audio: audio::Handle,
     net: Arc<net::Handle>,
+    /// Advertising and browsing. Dropping it withdraws us from the network, so
+    /// stopping the transport also makes us disappear from other rosters
+    /// immediately rather than after a timeout.
+    discovery: Option<discovery::Discovery>,
     stop: Arc<AtomicBool>,
 }
 
@@ -39,6 +44,12 @@ impl Drop for Session {
 impl Session {
     pub fn stats(&self) -> net::Stats {
         self.net.stats()
+    }
+
+    /// Empty when discovery could not start — which is a normal state on a
+    /// network that filters mDNS, not a failure of the session.
+    pub fn peers(&self) -> Vec<discovery::Peer> {
+        self.discovery.as_ref().map(|d| d.peers()).unwrap_or_default()
     }
 }
 
@@ -66,9 +77,21 @@ pub fn start(port: u16, peer: &str) -> Result<Session> {
             }
         })?;
 
+    // Discovery failing must not take the transport down with it. Plenty of
+    // networks filter mDNS, and on those the app still works with a peer typed
+    // by hand — which is why manual entries exist at all.
+    let discovery = match discovery::start(port) {
+        Ok(d) => Some(d),
+        Err(e) => {
+            eprintln!("[mdns] discovery unavailable: {e:#}");
+            None
+        }
+    };
+
     Ok(Session {
         _audio: pipeline.handle,
         net,
+        discovery,
         stop,
     })
 }

@@ -1,5 +1,6 @@
 mod audio;
 mod config;
+mod discovery;
 mod net;
 mod session;
 
@@ -45,6 +46,27 @@ fn net_start(
     Ok(())
 }
 
+/// Everyone discovered on the LAN, live or recently gone. Empty when the
+/// transport is stopped, and also on a network that filters mDNS — which is a
+/// normal condition, not an error, and the reason peers can be added by hand.
+#[tauri::command]
+fn net_peers(state: State<NetState>) -> Result<Vec<discovery::Peer>, String> {
+    Ok(state
+        .0
+        .lock()
+        .map_err(|e| e.to_string())?
+        .as_ref()
+        .map(|s| s.peers())
+        .unwrap_or_default())
+}
+
+/// The name this machine advertises itself under, so the UI can show you which
+/// entry in everyone else's roster is you.
+#[tauri::command]
+fn local_name() -> String {
+    discovery::local_name()
+}
+
 /// What the app will auto-start with, or `None` if it has never been
 /// configured. The UI reads this to fill its fields rather than keeping its own
 /// copy, so there is one source of truth for what this machine does.
@@ -78,7 +100,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
-            greet, net_start, net_stop, net_stats, config_get
+            greet, net_start, net_stop, net_stats, net_peers, local_name, config_get
         ])
         .setup(|app| {
             let show = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
