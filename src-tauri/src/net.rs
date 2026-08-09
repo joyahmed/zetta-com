@@ -168,7 +168,100 @@ fn resolve_v4(peer: &str) -> Result<SocketAddr> {
 /// send buffer on the stack.
 const MAX_PAYLOAD: usize = 1400;
 
-pub fn start(port: u16, peer: &str, audio_in: SyncSender<Vec<u8>>) -> Result<Handle> {
+/// How many packets to hold before releasing, so one that overtakes another has
+/// time to be put back in order. Three frames is 60 ms — audible as latency,
+/// and the price of not clicking on every reorder.
+const JITTER_TARGET: usize = 3;
+/// Slots in the reorder window. Must exceed JITTER_TARGET with room to spare,
+/// and a power of two so `% SLOTS` is cheap and wraps with the sequence number.
+const SLOTS: usize = 32;
+
+/// Reorder window.
+///
+/// UDP delivers late, out of order, and not at all, and decoding in arrival
+/// order turns every one of those into a click. This holds packets by sequence
+/// number and releases them in order, giving a straggler a few frames' grace
+/// before declaring it lost.
+///
+/// Indexed by `seq % SLOTS` rather than kept in a map, because a map keyed on
+/// u16 sorts wrongly across the wrap at 65535 — which arrives after about 22
+/// minutes of talking, in a real conversation and never in a test.
+struct Jitter {
+    slots: [Option<Vec<u8>>; SLOTS],
+    /// The sequence number we are waiting to release. `None` until the first
+    /// packet arrives and sets the origin.
+    next: Option<u16>,
+    depth: usize,
+}
+
+impl Jitter {
+    fn new() -> Self {
+        Self {
+            slots: [const { None }; SLOTS],
+            next: None,
+            depth: 0,
+        }
+    }
+
+    fn reset(&mut self, seq: u16) {
+        self.slots = [const { None }; SLOTS];
+        self.depth = 0;
+        self.next = Some(seq);
+    }
+
+    /// Take a packet in, and hand back everything now releasable in order.
+    /// `None` in the output means a frame is genuinely missing and the decoder
+    /// should conceal it rather than skip it.
+    fn push(&mut self, seq: u16, payload: Vec<u8>, out: &mut Vec<Option<Vec<u8>>>) {
+        let next = match self.next {
+            Some(n) => n,
+            None => {
+                self.reset(seq);
+                seq
+            }
+        };
+
+        let ahead = seq.wrapping_sub(next);
+        if ahead >= 0x8000 {
+            // Older than what we have already released — it lost its race and
+            // playing it now would put it in the wrong place.
+            return;
+        }
+        if ahead as usize >= SLOTS {
+            // Too far ahead to be reordering: the talker restarted, or the
+            // network went away and came back. Starting over beats emitting
+            // half a window of concealment.
+            self.reset(seq);
+        }
+
+        let idx = (seq as usize) % SLOTS;
+        if self.slots[idx].is_none() {
+            self.depth += 1;
+        }
+        self.slots[idx] = Some(payload);
+
+        // Release in order. A present frame always goes. A missing one is only
+        // given up on once enough packets are banked behind it to prove it is
+        // late rather than merely out of order.
+        loop {
+            let next = self.next.unwrap_or(seq);
+            let idx = (next as usize) % SLOTS;
+            if let Some(p) = self.slots[idx].take() {
+                self.depth -= 1;
+                out.push(Some(p));
+            } else if self.depth >= JITTER_TARGET {
+                out.push(None);
+            } else {
+                break;
+            }
+            self.next = Some(next.wrapping_add(1));
+        }
+    }
+}
+
+/// `audio_in` carries `None` for a frame the sequence numbers prove is missing,
+/// so the decoder can conceal the gap rather than skip it.
+pub fn start(port: u16, peer: &str, audio_in: SyncSender<Option<Vec<u8>>>) -> Result<Handle> {
     let dest = resolve_v4(peer)?;
 
     // 0.0.0.0 written out on purpose. An empty host binds IPv6-only on Windows
@@ -198,6 +291,8 @@ pub fn start(port: u16, peer: &str, audio_in: SyncSender<Vec<u8>>) -> Result<Han
     thread::Builder::new().name("net-rx".into()).spawn(move || {
         let mut buf = [0u8; 2048];
         let mut expect: Option<u16> = None;
+        let mut jitter = Jitter::new();
+        let mut ready: Vec<Option<Vec<u8>>> = Vec::with_capacity(SLOTS);
 
         while !rx_stop.load(Ordering::Relaxed) {
             let len = match socket.recv_from(&mut buf) {
@@ -226,10 +321,14 @@ pub fn start(port: u16, peer: &str, audio_in: SyncSender<Vec<u8>>) -> Result<Han
             rx_counters.last_seq.store(h.seq as u64, Ordering::Relaxed);
 
             if h.kind == KIND_AUDIO && len > HEADER_LEN {
-                // try_send: if the decoder is behind, dropping the newest frame
-                // is better than growing a queue of speech nobody will want by
-                // the time it plays.
-                let _ = audio_in.try_send(buf[HEADER_LEN..len].to_vec());
+                ready.clear();
+                jitter.push(h.seq, buf[HEADER_LEN..len].to_vec(), &mut ready);
+                for frame in ready.drain(..) {
+                    // try_send: if the decoder is behind, dropping the newest
+                    // frame is better than growing a queue of speech nobody
+                    // will want by the time it plays.
+                    let _ = audio_in.try_send(frame);
+                }
             }
         }
     })?;

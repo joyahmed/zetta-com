@@ -99,7 +99,10 @@ pub struct Frame {
 /// module knows the other exists.
 pub struct Pipeline {
     pub frames_out: Receiver<Frame>,
-    pub frames_in: SyncSender<Vec<u8>>,
+    /// `None` means a frame the transport knows is missing. It is not the same
+    /// as no frame at all: the decoder conceals a gap it is told about, and a
+    /// concealed 20 ms is far less audible than a skipped one.
+    pub frames_in: SyncSender<Option<Vec<u8>>>,
     pub handle: Handle,
 }
 
@@ -111,7 +114,7 @@ pub fn start() -> Result<Pipeline> {
     // correct response and an unbounded queue is not: audio that arrives late
     // enough is worth less than the memory holding it.
     let (out_tx, out_rx) = mpsc::sync_channel::<Frame>(8);
-    let (in_tx, in_rx) = mpsc::sync_channel::<Vec<u8>>(16);
+    let (in_tx, in_rx) = mpsc::sync_channel::<Option<Vec<u8>>>(16);
 
     let thread_stop = stop.clone();
     thread::Builder::new()
@@ -144,7 +147,7 @@ pub fn start() -> Result<Pipeline> {
 fn build(
     stop: &Arc<AtomicBool>,
     out_tx: SyncSender<Frame>,
-    in_rx: Receiver<Vec<u8>>,
+    in_rx: Receiver<Option<Vec<u8>>>,
 ) -> Result<Streams> {
     let host = cpal::default_host();
 
@@ -345,7 +348,7 @@ fn build_playback(
     cfg: &SupportedStreamConfig,
     stop: &Arc<AtomicBool>,
     stats: &Arc<Stats>,
-    in_rx: Receiver<Vec<u8>>,
+    in_rx: Receiver<Option<Vec<u8>>>,
 ) -> Result<cpal::Stream> {
     let hz = cfg.sample_rate();
     let frame = (hz / 50) as usize;
@@ -461,10 +464,19 @@ fn build_playback(
                 Err(RecvTimeoutError::Disconnected) => break,
             };
 
-            // Decoding to the local frame size rather than the sender's is what
-            // converts the rate: libopus resamples internally, so nothing here
-            // has to, and the two machines never have to agree on a rate.
-            let got = match dec.decode(Some(&packet[..]), &mut out[..frame], false) {
+            // A `None` is a frame the transport knows never arrived, and
+            // handing that to Opus is packet-loss concealment: it synthesises a
+            // plausible 20 ms from what it just heard. Skipping the frame
+            // instead gives a click; this gives a smear you have to listen for.
+            //
+            // Decoding to the local frame size rather than the sender's is also
+            // what converts the rate: libopus resamples internally, so nothing
+            // here has to, and the two machines never have to agree on a rate.
+            let decoded = match &packet {
+                Some(p) => dec.decode(Some(&p[..]), &mut out[..frame], false),
+                None => dec.decode(None::<&[u8]>, &mut out[..frame], false),
+            };
+            let got = match decoded {
                 Ok(n) => n,
                 Err(e) => {
                     eprintln!("[audio] decode: {e}");
