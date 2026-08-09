@@ -10,7 +10,7 @@
 //! allocation, no locks, no logging inside them — `println!` takes the stdout
 //! lock and is audible as a crackle.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::Duration;
@@ -59,6 +59,27 @@ impl Drop for Handle {
 struct Streams {
     _input: cpal::Stream,
     _output: cpal::Stream,
+}
+
+/// Counters, so a glitch says which link produced it instead of being guessed
+/// at by ear. Atomic increments are wait-free on x86, which is why they are
+/// tolerable inside the real-time callbacks when a lock or a log would not be.
+#[derive(Default)]
+struct Stats {
+    /// Samples the capture callback threw away because ring A was full: the
+    /// codec worker is not keeping up.
+    in_drops: AtomicU64,
+    /// Frames encoded and decoded.
+    frames: AtomicU64,
+    /// Output callbacks that produced silence because ring B was short: the
+    /// pipeline is not keeping up with the sound card.
+    underruns: AtomicU64,
+    /// Times playback had to re-bank after running dry. A steady count here is
+    /// the signature of a periodic stutter.
+    primes: AtomicU64,
+    /// Latest ring occupancies, published for the reporter thread.
+    a_occ: AtomicU64,
+    b_occ: AtomicU64,
 }
 
 pub fn start() -> Result<Handle> {
@@ -143,6 +164,9 @@ fn build(stop: &Arc<AtomicBool>) -> Result<Streams> {
         eprintln!("[audio] stream error: {e}");
     }
 
+    let stats = Arc::new(Stats::default());
+
+    let st = stats.clone();
     let input_stream = match in_cfg.sample_format() {
         SampleFormat::F32 => input.build_input_stream(
             in_stream_cfg.clone(),
@@ -152,7 +176,9 @@ fn build(stop: &Arc<AtomicBool>) -> Result<Streams> {
                     let v = (sum / in_ch as f32).clamp(-1.0, 1.0);
                     // Full ring drops the sample. Correct behaviour here:
                     // never block a real-time callback.
-                    let _ = prod_a.try_push((v * i16::MAX as f32) as i16);
+                    if prod_a.try_push((v * i16::MAX as f32) as i16).is_err() {
+                        st.in_drops.fetch_add(1, Ordering::Relaxed);
+                    }
                 }
             },
             on_err,
@@ -163,7 +189,9 @@ fn build(stop: &Arc<AtomicBool>) -> Result<Streams> {
             move |data: &[i16], _: &cpal::InputCallbackInfo| {
                 for frame in data.chunks_exact(in_ch) {
                     let sum: i32 = frame.iter().map(|s| *s as i32).sum();
-                    let _ = prod_a.try_push((sum / in_ch as i32) as i16);
+                    if prod_a.try_push((sum / in_ch as i32) as i16).is_err() {
+                        st.in_drops.fetch_add(1, Ordering::Relaxed);
+                    }
                 }
             },
             on_err,
@@ -186,19 +214,25 @@ fn build(stop: &Arc<AtomicBool>) -> Result<Streams> {
             // Captured by the FnMut closure. Only this callback touches it, so
             // it needs no atomic and no lock — which matters on an RT thread.
             let mut primed = false;
+            let st = stats.clone();
             output.build_output_stream(
                 out_stream_cfg.clone(),
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                    let have = cons_b.occupied_len();
+                    st.b_occ.store(have as u64, Ordering::Relaxed);
                     let need = data.len() / out_ch;
                     if !primed {
-                        if cons_b.occupied_len() < prime {
+                        if have < prime {
+                            st.underruns.fetch_add(1, Ordering::Relaxed);
                             data.fill(0.0);
                             return;
                         }
                         primed = true;
+                        st.primes.fetch_add(1, Ordering::Relaxed);
                     }
-                    if cons_b.occupied_len() < need {
+                    if have < need {
                         primed = false;
+                        st.underruns.fetch_add(1, Ordering::Relaxed);
                         data.fill(0.0);
                         return;
                     }
@@ -213,19 +247,25 @@ fn build(stop: &Arc<AtomicBool>) -> Result<Streams> {
         }
         SampleFormat::I16 => {
             let mut primed = false;
+            let st = stats.clone();
             output.build_output_stream(
                 out_stream_cfg.clone(),
                 move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
+                    let have = cons_b.occupied_len();
+                    st.b_occ.store(have as u64, Ordering::Relaxed);
                     let need = data.len() / out_ch;
                     if !primed {
-                        if cons_b.occupied_len() < prime {
+                        if have < prime {
+                            st.underruns.fetch_add(1, Ordering::Relaxed);
                             data.fill(0);
                             return;
                         }
                         primed = true;
+                        st.primes.fetch_add(1, Ordering::Relaxed);
                     }
-                    if cons_b.occupied_len() < need {
+                    if have < need {
                         primed = false;
+                        st.underruns.fetch_add(1, Ordering::Relaxed);
                         data.fill(0);
                         return;
                     }
@@ -241,6 +281,7 @@ fn build(stop: &Arc<AtomicBool>) -> Result<Streams> {
     };
 
     let codec_stop = stop.clone();
+    let codec_stats = stats.clone();
     thread::Builder::new().name("codec".into()).spawn(move || {
         let mut enc = match Encoder::new(enc_rate, Channels::Mono, Application::Voip) {
             Ok(e) => e,
@@ -261,10 +302,13 @@ fn build(stop: &Arc<AtomicBool>) -> Result<Streams> {
         let mut out = [0i16; MAX_FRAME];
 
         while !codec_stop.load(Ordering::Relaxed) {
-            if cons_a.occupied_len() < in_frame {
+            let have = cons_a.occupied_len();
+            codec_stats.a_occ.store(have as u64, Ordering::Relaxed);
+            if have < in_frame {
                 thread::sleep(Duration::from_millis(2));
                 continue;
             }
+            codec_stats.frames.fetch_add(1, Ordering::Relaxed);
             cons_a.pop_slice(&mut pcm[..in_frame]);
 
             let n = match enc.encode(&pcm[..in_frame], &mut packet) {
@@ -284,6 +328,30 @@ fn build(stop: &Arc<AtomicBool>) -> Result<Streams> {
                 }
             };
             prod_b.push_slice(&out[..got]);
+        }
+    })?;
+
+    // One line a second. Cheap enough to leave in while the pipeline is being
+    // tuned, and it turns "it sounds wrong" into a number that names the link.
+    let report_stop = stop.clone();
+    thread::Builder::new().name("audio-stats".into()).spawn(move || {
+        let (mut p_drops, mut p_frames, mut p_under, mut p_primes) = (0u64, 0u64, 0u64, 0u64);
+        while !report_stop.load(Ordering::Relaxed) {
+            thread::sleep(Duration::from_secs(1));
+            let drops = stats.in_drops.load(Ordering::Relaxed);
+            let frames = stats.frames.load(Ordering::Relaxed);
+            let under = stats.underruns.load(Ordering::Relaxed);
+            let primes = stats.primes.load(Ordering::Relaxed);
+            eprintln!(
+                "[audio] 1s frames {} drops {} underruns {} reprimes {} ringA {} ringB {}",
+                frames - p_frames,
+                drops - p_drops,
+                under - p_under,
+                primes - p_primes,
+                stats.a_occ.load(Ordering::Relaxed),
+                stats.b_occ.load(Ordering::Relaxed),
+            );
+            (p_drops, p_frames, p_under, p_primes) = (drops, frames, under, primes);
         }
     })?;
 
