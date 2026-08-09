@@ -15,6 +15,8 @@ mod net;
 mod room;
 mod session;
 mod state;
+#[cfg(target_os = "windows")]
+mod winshell;
 
 use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
@@ -34,6 +36,13 @@ pub fn run() {
     // Created before the builder because both the shortcut handler and the
     // session need them, and the handler is installed while the app is being
     // configured rather than after.
+    // Before anything else: Windows resolves a toast's name and icon from the
+    // process AppUserModelID, and without one the notification library falls
+    // back to PowerShell's — which is why every toast was captioned "Windows
+    // PowerShell".
+    #[cfg(target_os = "windows")]
+    winshell::register("com.joy.zetta-com", "Zetta Com");
+
     let ptt = Arc::new(AtomicBool::new(false));
     let bindings: Bindings = Arc::new(Mutex::new(Vec::new()));
     let listing: ShortcutList = Arc::new(Mutex::new(Vec::new()));
@@ -82,7 +91,6 @@ pub fn run() {
                 .build(),
         )
         .invoke_handler(tauri::generate_handler![
-            commands::greet,
             commands::net_start,
             commands::net_stop,
             commands::net_stats,

@@ -11,12 +11,11 @@ use tauri::State;
 use crate::state::{NetState, Ptt};
 use crate::{audio, config, discovery, keys, net, room, session};
 
-#[tauri::command]
-pub fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
-
-/// The running session, or nothing. `session::Session` stops audio and the
+/// Bind the socket and start audio, replacing whatever was running.
+///
+/// The settings come from disk rather than from the arguments, apart from the
+/// port and the fallback address, so that pressing Start uses the same
+/// configuration the app would have auto-started with.
 #[tauri::command]
 pub fn net_start(
     app: tauri::AppHandle,

@@ -1,8 +1,10 @@
 [package]
 name = "zetta-com"
 version = "1.1.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "A LAN intercom. Hold a key and the people you choose hear you."
+authors = ["Joy Ahmed <joy_ahmed_007@yahoo.com>"]
+license = "MIT"
+repository = "https://github.com/joyahmed/zetta-com"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -57,5 +59,6 @@ getrandom = "0.4.3"
 # then implements a COM interface from one version against a trait from the
 # other and will not compile. Naming it here keeps both halves on 0.61.
 [target.'cfg(target_os = "windows")'.dependencies]
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Com", "Win32_UI_Shell", "Win32_UI_Shell_PropertiesSystem", "Win32_System_Com_StructuredStorage"] }
 windows-core = "0.61"
 
