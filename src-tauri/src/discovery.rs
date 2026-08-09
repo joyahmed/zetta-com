@@ -102,14 +102,42 @@ pub fn local_name() -> String {
         .unwrap_or_else(|_| "unknown".to_string())
 }
 
+/// A value unique to this process, used to recognise our own advertisement.
+///
+/// Not the machine name: two instances on one PC share that, and comparing
+/// names made each of them treat the other as itself and ignore it — which is
+/// invisible across two machines and makes discovery useless on one.
+fn instance_id() -> String {
+    let pid = std::process::id();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    format!("{pid:x}{nanos:x}")
+}
+
 pub fn start(port: u16) -> Result<Discovery> {
     let daemon = ServiceDaemon::new().context("starting the mDNS daemon")?;
     let name = local_name();
+    let id = instance_id();
 
-    // Advertise. The instance name has to be unique on the network; the
-    // machine name is exactly that, and is also what a human recognises.
-    let info = ServiceInfo::new(SERVICE, &name, &format!("{name}.local."), (), port, None)
-        .context("building the service advertisement")?
+    // The mDNS instance label has to be unique on the network, so it carries
+    // the id. The *display* name travels in a TXT record instead, which keeps
+    // the roster showing "JOY-PC" rather than "JOY-PC-1a2b3c".
+    let mut props = HashMap::new();
+    props.insert("id".to_string(), id.clone());
+    props.insert("name".to_string(), name.clone());
+
+    let label = format!("{name}-{id}");
+    let info = ServiceInfo::new(
+        SERVICE,
+        &label,
+        &format!("{name}.local."),
+        (),
+        port,
+        props,
+    )
+    .context("building the service advertisement")?
         // Ask the daemon to fill in this host's addresses rather than guessing
         // at them: a machine with a VPN adapter or a WSL bridge has several,
         // and picking the wrong one advertises an address nobody can reach.
@@ -129,7 +157,7 @@ pub fn start(port: u16) -> Result<Discovery> {
 
     let ev_peers = peers.clone();
     let ev_stop = stop.clone();
-    let me = fullname.clone();
+    let me = id.clone();
     thread::Builder::new()
         .name("mdns".into())
         .spawn(move || {
@@ -143,11 +171,17 @@ pub fn start(port: u16) -> Result<Discovery> {
 
                 match event {
                     ServiceEvent::ServiceResolved(info) => {
-                        // We advertise on the same network we browse, so we
-                        // see ourselves. Talking to yourself is a real bug in
-                        // an intercom, and this is where it is cheapest to
-                        // prevent.
-                        if info.get_fullname() == me {
+                        // We advertise on the same network we browse, so we see
+                        // ourselves. Talking to yourself is a real bug in an
+                        // intercom, and this is where it is cheapest to
+                        // prevent. Compared by instance id rather than by name,
+                        // because two instances on one PC share a name and
+                        // comparing names made each ignore the other.
+                        let their_id = info
+                            .get_property_val_str("id")
+                            .unwrap_or_default()
+                            .to_string();
+                        if their_id == me {
                             continue;
                         }
                         let Some(ip) = info
@@ -167,13 +201,16 @@ pub fn start(port: u16) -> Result<Discovery> {
                             continue;
                         };
 
-                        let id = info.get_fullname().to_string();
-                        let name = info
-                            .get_fullname()
-                            .split('.')
-                            .next()
-                            .unwrap_or(&id)
+                        let key = info.get_fullname().to_string();
+                        // The friendly name rides in TXT; the label is a
+                        // fallback for anything advertising without it.
+                        let mut name = info
+                            .get_property_val_str("name")
+                            .unwrap_or_default()
                             .to_string();
+                        if name.is_empty() {
+                            name = key.split('.').next().unwrap_or(&key).to_string();
+                        }
                         let addr = SocketAddr::new(ip, info.get_port());
 
                         let mut map = match ev_peers.lock() {
@@ -181,10 +218,10 @@ pub fn start(port: u16) -> Result<Discovery> {
                             Err(e) => e.into_inner(),
                         };
                         let fresh = map.insert(
-                            id.clone(),
+                            key.clone(),
                             Entry {
                                 peer: Peer {
-                                    id: id.clone(),
+                                    id: key.clone(),
                                     name: name.clone(),
                                     addr,
                                     live: true,

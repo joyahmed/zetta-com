@@ -84,6 +84,9 @@ fn net_start(
     port: u16,
     peer: String,
 ) -> Result<(), String> {
+    // A port on the command line wins, so a second instance started for testing
+    // cannot be dragged back onto the first one's port by the shared config.
+    let port = config::port_override().unwrap_or(port);
     let manual = config::load(&app).map(|c| c.manual).unwrap_or_default();
     let mut guard = state.0.lock().map_err(|e| e.to_string())?;
     // Drop any existing transport before binding, or starting on the same port
@@ -97,12 +100,16 @@ fn net_start(
     // never the one restored at next launch.
     // Merged into whatever is already there rather than replacing it, or
     // pressing Start would silently wipe the presets and the key bindings.
-    let mut cfg = config::load(&app).unwrap_or_default();
-    cfg.port = port;
-    cfg.peer = peer;
-    cfg.manual = manual;
-    if let Err(e) = config::save(&app, &cfg) {
-        eprintln!("[config] not saved: {e:#}");
+    // Not saved when the port came from the command line: an override is for
+    // this run, and writing it back would move the other instance next launch.
+    if config::port_override().is_none() {
+        let mut cfg = config::load(&app).unwrap_or_default();
+        cfg.port = port;
+        cfg.peer = peer;
+        cfg.manual = manual;
+        if let Err(e) = config::save(&app, &cfg) {
+            eprintln!("[config] not saved: {e:#}");
+        }
     }
     Ok(())
 }
@@ -357,7 +364,7 @@ pub fn run() {
 
             let session = match config::load(app.handle()) {
                 Some(cfg) => match session::start(
-                    cfg.port,
+                    config::port_override().unwrap_or(cfg.port),
                     &cfg.peer,
                     &cfg.manual,
                     ptt.clone(),

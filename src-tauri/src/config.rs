@@ -82,6 +82,27 @@ fn path(app: &AppHandle) -> Result<PathBuf> {
     Ok(dir.join("transport.json"))
 }
 
+/// A port given on the command line, which wins over the saved one and is not
+/// written back.
+///
+/// Two instances on one machine share this config file, so without an override
+/// the second one either fails to bind or saves its port over the first's. That
+/// only happens while testing, and it is exactly when it is most confusing.
+///
+/// `zetta-com.exe --port 9002`
+pub fn port_override() -> Option<u16> {
+    let mut args = std::env::args().skip(1);
+    while let Some(a) = args.next() {
+        if a == "--port" {
+            return args.next().and_then(|v| v.parse().ok());
+        }
+        if let Some(v) = a.strip_prefix("--port=") {
+            return v.parse().ok();
+        }
+    }
+    None
+}
+
 /// `None` when there is nothing saved yet, or when what is saved cannot be
 /// read. A corrupt config must not stop the app launching — it just means the
 /// window opens stopped, which is recoverable by hand.
