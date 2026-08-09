@@ -120,12 +120,31 @@ playback ← ring B ← mixer ◄── per-peer decoders ◄── net rx
 Sequenced so the riskiest thing is proven first, and every slice runs and shows
 something before the next one starts.
 
-### 0. Skeleton — done
+> ### ▶ Next: **3c — heartbeat and timeout**
+>
+> Make `live` mean something. A peer is currently live because mDNS mentioned it,
+> which stays true for a while after a PC is switched off. A heartbeat on
+> `kind=2` every couple of seconds, and a peer that misses its window goes grey.
+>
+> After that: **3d**, fan-out to every live peer, which is where selecting a
+> single peer stops existing.
+
+| Step | | |
+|---|---|---|
+| 0 | Skeleton | ✅ done |
+| 1 | Audio loopback in-process | ✅ done |
+| 2 | Transport | ✅ done |
+| 3 | Discovery and presence | ◐ 3a ✅ 3b ✅ · **3c next** · 3d |
+| 4 | Push-to-talk | ☐ |
+| 5 | Text and notifications | ☐ |
+| 6 | Packaging | ☐ |
+
+### 0. Skeleton ✅
 
 Tauri v2, React + TypeScript, tray icon, close-to-hide. Quit is a tray menu
 item, because once closing hides the window it is the only way out.
 
-### 1. Audio loopback in-process — done
+### 1. Audio loopback in-process ✅
 
 `cpal` capture → Opus encode → Opus decode → `cpal` playback, one process, no
 network. This was the step the whole rewrite was gated on, and it works.
@@ -140,25 +159,27 @@ where the same silence in clean chunks is inaudible.
 The callbacks are real-time threads: no allocation, no locks, no logging. A
 `println!` takes the stdout lock and is audible.
 
-### 2. Transport — in progress
+### 2. Transport ✅
 
-- **2a** Two windows, crossed ports, counters climbing. *(verifying)*
-- **2b** Opus frames as the payload. Cut the loopback; playback is fed only by
-  what arrives. **The milestone — you hear the other window.**
-- **2c** Jitter buffer: hold 3–5 packets, decode in `seq` order.
-- **2d** Packet-loss concealment: `decode(None, …)` on a gap. A skipped frame is
-  a click; PLC is a smear you have to listen for. Test by dropping 1-in-20
-  deliberately.
+- [x] **2a** Two windows, crossed ports, counters climbing.
+- [x] **2b** Opus frames as the payload. Loopback cut; playback fed only by what
+      arrives. **Verified between two PCs.**
+- [x] **2c** Jitter buffer: holds 3 packets, decodes in `seq` order.
+- [x] **2d** Packet-loss concealment: `decode(None, …)` on a gap.
 
-*Done when:* two instances on one PC, different ports, pass audio cleanly.
+Also landed here, unplanned: the `session` module owning audio and net; capture
+and playback made independently optional; and the transport auto-starting from
+`transport.json` so a listening PC needs nobody to click anything.
 
-### 3. Discovery and presence
+### 3. Discovery and presence — in progress
 
-- **3a** `mdns-sd` advertise and browse; peers appear and vanish in the log.
-- **3b** Roster in the UI. **The peer input dies here.**
-- **3c** Heartbeat and timeout; live or greyed.
-- **3d** Fan-out to every live peer; per-peer decoder, per-peer jitter buffer,
-  mixer.
+- [x] **3a** `mdns-sd` advertise and browse; peers appear and vanish in the log.
+- [x] **3b** Roster in the UI, with the address behind Advanced.
+- [ ] **3c** ← **next.** Heartbeat on `kind=2` and a timeout, so `live` means
+      "answered recently" rather than "mDNS mentioned it once".
+- [ ] **3d** Fan-out to every live peer; per-peer decoder, per-peer jitter
+      buffer, mixer. **Selecting a single peer stops existing here.**
+- [ ] Peers added by hand, merged with discovered ones (#12).
 
 *Done when:* a second instance appears within a couple of seconds and greys out
 within the timeout when killed.
@@ -168,17 +189,20 @@ This is the thing the old version could never do, and it removes most of the
 
 ### 4. Push-to-talk
 
-- **4a** Global shortcut; nothing is sent unless the key is held.
-- **4b** Talking flag in the header; the UI shows who is talking.
-- **4c** Mute local playback while transmitting.
+- [ ] **4a** Global shortcut; nothing is sent unless the key is held.
+- [ ] **4b** Talking flag in the header; the UI shows who is talking.
+- [ ] **4c** Mute local playback while transmitting.
+- [ ] The full shortcut set — no per-person keys (#13).
 
 *Done when:* hold to talk, release to listen, no feedback with speakers on.
 
 ### 5. Text and notifications
 
-- **5a** `kind=1` UTF-8 messages on the same socket.
-- **5b** Native notifications.
-- **5c** Message log.
+- [ ] **5a** `kind=1` UTF-8 messages on the same socket.
+- [ ] **5b** Native notifications.
+- [ ] **5c** Message log.
+- [ ] Voice and text kept separate as actions and code paths (#14).
+- [ ] Preset messages, one shortcut each (#15).
 
 Then the design pass, once roster, talk state and messages all exist to be
 designed together rather than four times over.
@@ -188,8 +212,12 @@ designed together rather than four times over.
 MSI, deb, AppImage, dmg. The app is now a **single named executable**, which is
 the whole point: one firewall identity, one prompt, one rule.
 
-- macOS: microphone entitlement and notarization, or Gatekeeper blocks it.
-- Linux: PipeWire and PulseAudio through `cpal` — test both.
+- [ ] macOS: microphone entitlement and notarization, or Gatekeeper blocks it.
+- [ ] Linux: PipeWire and PulseAudio through `cpal` — test both.
+- [ ] All-profile firewall rule created by the installer (#11).
+- [ ] Recover when the audio device changes or disappears (#9).
+- [ ] Gate the once-a-second audio stats line behind a debug flag.
+- [ ] LICENSE and a real README (#16).
 
 ---
 
@@ -260,12 +288,15 @@ worth carrying.
 
 ## Deferred, not forgotten
 
-- **Recover when the audio device changes or disappears.** `cpal` binds a stream
-  to a device and does not follow the Windows default, so swapping headsets
-  mid-run leaves the app holding a corpse and failing silently. People swap
-  headsets mid-conversation and Bluetooth devices drop on their own. Before
-  packaging.
-- **Gate the once-a-second audio stats line** behind a debug flag before
-  shipping. It earns its place while the pipeline is being tuned.
-- **`tauri-specta`** to generate the TypeScript types from the Rust structs,
-  when the roster type first crosses the IPC boundary at step 3.
+All of these are boxes in the step lists above, so they get ticked rather than
+remembered. The reasoning that is not obvious from the one-liners:
+
+- **Recover when the audio device changes or disappears** (step 6). `cpal` binds
+  a stream to a device and does not follow the Windows default, so swapping
+  headsets mid-run leaves the app holding a corpse and failing silently. People
+  swap headsets mid-conversation and Bluetooth devices drop on their own.
+- **Gate the once-a-second audio stats line** (step 6). It earns its place while
+  the pipeline is being tuned and is noise afterwards.
+- **`tauri-specta`**, to generate the TypeScript types from the Rust structs.
+  The roster type crosses the IPC boundary by hand today, in `types.d.ts`, and
+  a hand-written twin is a thing that drifts.
