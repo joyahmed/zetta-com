@@ -30,6 +30,10 @@ pub enum Action {
     TalkAll,
     /// Aim at the whole room and bring the window up ready to type.
     MessageAll,
+    /// Go on or off air without touching the window. The frontend owns start
+    /// and stop — it holds the port and reports the errors — so this asks
+    /// rather than does, the same way AddPc does.
+    ToggleTransport,
     /// Open the window with the add-a-PC field ready.
     AddPc,
     /// Show the list of every key and what it does.
@@ -105,7 +109,14 @@ pub fn bind(
         };
         l.push(ShortcutInfo {
             label: label.to_string(),
-            keys: spec.replace("CommandOrControl", "Ctrl").replace("Digit", ""),
+            // Tauri's spec names a letter "KeyA" and a number "Digit1"; both
+            // are noise on a key cap. Stripping only "Digit" left the letter
+            // keys reading "Ctrl+Alt+KeyK" in the list, which looks like a
+            // typo rather than a shortcut.
+            keys: spec
+                .replace("CommandOrControl", "Ctrl")
+                .replace("Digit", "")
+                .replace("Key", ""),
             registered,
         });
     };
@@ -223,6 +234,14 @@ pub fn dispatch(
 
         // These only ask the window to show something. The work is the
         // frontend's, so the key emits an event rather than reaching into it.
+        // No reveal(). Going off air mid-conversation should not drag the
+        // window in front of whatever is being worked on — that is the reason
+        // to have the key at all.
+        Action::ToggleTransport => {
+            if pressed {
+                let _ = app.emit("toggle-transport", ());
+            }
+        }
         Action::AddPc => {
             if pressed {
                 reveal(app);
@@ -283,6 +302,11 @@ pub fn register_all(
             "Message everyone",
             "CommandOrControl+Shift+Digit0",
             Action::MessageAll,
+        ),
+        (
+            "Start or stop",
+            "CommandOrControl+Alt+KeyS",
+            Action::ToggleTransport,
         ),
         ("Add a PC", "CommandOrControl+Alt+KeyA", Action::AddPc),
         (

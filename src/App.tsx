@@ -1,12 +1,12 @@
 import { useState } from 'react';
-import { Advanced } from './components/Advanced';
+import { AddPc } from './components/AddPc';
 import { Alert } from './components/Alert';
 import { Connection } from './components/Connection';
 import { Diagnostics } from './components/Diagnostics';
 import { Messages } from './components/Messages';
 import { Modal } from './components/Modal';
 import { Nav } from './components/Nav';
-import { PcNames } from './components/PcNames';
+import { Pcs } from './components/Pcs';
 import { Presets } from './components/Presets';
 import { Roster } from './components/Roster';
 import { Shortcuts } from './components/Shortcuts';
@@ -25,8 +25,6 @@ const App = () => {
 	const {
 		port,
 		setPort,
-		peer,
-		setPeer,
 		stats,
 		peers,
 		error,
@@ -36,7 +34,8 @@ const App = () => {
 		running
 	} = useTransport();
 	const { messages, send } = useMessages(running);
-	const { manual, presets, add, remove, rename } = useManualPeers(setError);
+	const { manual, presets, add, remove, edit, rename } =
+		useManualPeers(setError);
 	const { target, setTarget } = useTarget(setError);
 	const {
 		shortcuts,
@@ -113,13 +112,28 @@ const App = () => {
 					onClose: () => setShowAddPc(false)
 				}}
 			>
-				<Advanced {...{ manual, onAdd: add, onRemove: remove }} />
+				<div className='flex flex-col gap-5'>
+					<div className='flex flex-col gap-2'>
+						<h3 className='text-xs font-medium tracking-wide text-slate-500 uppercase dark:text-slate-400'>
+							Add
+						</h3>
+						<AddPc {...{ onAdd: add }} />
+					</div>
 
-				<div className='mt-5 flex flex-col gap-2'>
-					<h3 className='text-xs font-medium tracking-wide text-slate-500 uppercase dark:text-slate-400'>
-						Names
-					</h3>
-					<PcNames {...{ peers, onRename: rename }} />
+					<div className='flex flex-col gap-2'>
+						<h3 className='text-xs font-medium tracking-wide text-slate-500 uppercase dark:text-slate-400'>
+							Known
+						</h3>
+						<Pcs
+							{...{
+								peers,
+								manual,
+								onRename: rename,
+								onEdit: edit,
+								onRemove: remove
+							}}
+						/>
+					</div>
 				</div>
 			</Modal>
 
@@ -131,9 +145,7 @@ const App = () => {
 				}}
 			>
 				<div className='flex flex-col gap-5'>
-					<Connection
-						{...{ port, peer, onPort: setPort, onPeer: setPeer, disabled: running }}
-					/>
+					<Connection {...{ port, onPort: setPort, disabled: running }} />
 
 					<div className='flex flex-col gap-2'>
 						<h3 className='text-xs font-medium tracking-wide text-slate-500 uppercase dark:text-slate-400'>

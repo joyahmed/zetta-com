@@ -1,44 +1,30 @@
 import { Field } from './Field';
 
-/// Port and a fallback address.
+/// The port this machine binds.
 ///
-/// Both are settings rather than part of adding a PC: the port is this
-/// machine's, and the address is the escape hatch for a network where discovery
-/// is filtered. Neither is something you touch while the transport is running,
-/// which is why they disable rather than disappear.
-export const Connection = ({
-	port,
-	peer,
-	onPort,
-	onPeer,
-	disabled
-}: ConnectionProps) => (
+/// A setting rather than part of adding a PC, and not something you touch while
+/// the transport is running, which is why it disables rather than disappears.
+///
+/// There used to be a "Fallback address" beside it — a single typed address for
+/// networks that filter mDNS. It was the same thing as a manually added PC (the
+/// session merged it straight into that list) but it lived in localStorage
+/// instead of the config, so it appeared in nobody's PC list and could not be
+/// removed. Whatever was in it is migrated into the PCs list on first launch.
+export const Connection = ({ port, onPort, disabled }: ConnectionProps) => (
 	<div className='flex flex-col gap-3'>
-		<div className='flex items-end gap-3'>
-			<Field
-				{...{
-					label: 'Port',
-					value: port,
-					onChange: onPort,
-					disabled,
-					className: 'w-24'
-				}}
-			/>
-			<Field
-				{...{
-					label: 'Fallback address',
-					value: peer,
-					onChange: onPeer,
-					disabled,
-					placeholder: '192.168.0.142:9001',
-					className: 'flex-1'
-				}}
-			/>
-		</div>
+		<Field
+			{...{
+				label: 'Port',
+				value: port,
+				onChange: onPort,
+				disabled,
+				className: 'w-24'
+			}}
+		/>
 		<p className='text-xs text-slate-500 dark:text-slate-400'>
 			{disabled
-				? 'Stop the transport to change these.'
-				: 'Everyone must use the same port. The address is only needed where discovery is blocked.'}
+				? 'Stop the transport to change this.'
+				: 'Everyone must use the same port. Add a PC that discovery cannot reach from the PCs list.'}
 		</p>
 	</div>
 );

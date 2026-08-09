@@ -34,7 +34,7 @@ export const Messages = ({ messages, onSend, disabled, to }: MessagesProps) => {
 				{messages.map(m => (
 					<div
 						key={m.id}
-						className={`flex gap-2 text-sm ${
+						className={`flex items-baseline gap-2 text-sm ${
 							m.mine ? 'text-slate-500 dark:text-slate-400' : ''
 						}`}
 					>

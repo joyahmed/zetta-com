@@ -95,17 +95,11 @@ type RosterProps = {
 
 type ConnectionProps = {
 	port: string;
-	peer: string;
 	onPort: (v: string) => void;
-	onPeer: (v: string) => void;
 	disabled: boolean;
 };
 
-type AdvancedProps = {
-	manual: string[];
-	onAdd: (addr: string) => Promise<void>;
-	onRemove: (addr: string) => Promise<void>;
-};
+type AddPcProps = { onAdd: (addr: string) => Promise<void> };
 
 type DiagnosticsProps = {
 	stats: NetStats | null;
@@ -131,9 +125,22 @@ type NavProps = {
 	onSettings: () => void;
 };
 
-type PcNamesProps = {
+/// One line of the PCs list. Flattened from a discovered `Peer` or from a bare
+/// manual address, which has no roster entry at all while the transport is
+/// stopped but still has to be editable.
+type PcRow = {
+	addr: string;
+	name: string;
+	manual: boolean;
+	live: boolean;
+};
+
+type PcsProps = {
 	peers: Peer[];
+	manual: string[];
 	onRename: (addr: string, label: string) => Promise<void>;
+	onEdit: (from: string, to: string) => Promise<void>;
+	onRemove: (addr: string) => Promise<void>;
 };
 
 type ModalProps = {
