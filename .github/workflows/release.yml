@@ -20,9 +20,14 @@ jobs:
           # Apple silicon and Intel are separate binaries, not one build with a
           # flag. A universal binary is possible but doubles the download for
           # everybody to spare one group a choice.
+          #
+          # Each is built on its own hardware rather than cross-compiled from
+          # one runner. libopus is C built by autotools, and cross-compiling it
+          # means fighting configure over host triples and arch flags — where
+          # macos-13 is Intel and builds x86_64 natively for free.
           - platform: macos-latest
             args: --target aarch64-apple-darwin
-          - platform: macos-latest
+          - platform: macos-13
             args: --target x86_64-apple-darwin
           - platform: ubuntu-latest
             args: ''
@@ -47,16 +52,17 @@ jobs:
             libasound2-dev build-essential curl wget file libxdo-dev libssl-dev \
             libayatana-appindicator3-dev
 
-      # libopus is C. audiopus_sys will link a system copy if pkg-config finds
-      # one and otherwise compiles the vendored source with cmake — and the
-      # vendored source is old enough to declare a cmake_minimum_required below
-      # 3.5, which CMake 4 refuses outright. Homebrew ships cmake 4; Ubuntu's
-      # apt still ships 3, which is exactly why Linux built and macOS did not.
+      # libopus is C, and audiopus_sys builds it with **autotools**, not cmake:
       #
-      # Installing opus means the compile does not happen at all.
+      #   autogen.sh: line 14: autoreconf: command not found
+      #   Failed to autogen Opus.
+      #
+      # macOS runners have no autoconf toolchain. Ubuntu passed only because
+      # build-essential dragged in what was needed, which is why this looked
+      # like a macOS-specific mystery rather than a missing tool.
       - name: macOS dependencies
-        if: matrix.platform == 'macos-latest'
-        run: brew install opus pkg-config cmake
+        if: startsWith(matrix.platform, 'macos')
+        run: brew install autoconf automake libtool pkg-config
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -66,7 +72,7 @@ jobs:
         with:
           # Only the mac runners need the extra triples; asking for them
           # elsewhere is a download nobody uses.
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ startsWith(matrix.platform, 'macos') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       # Keyed on the platform and the lockfile, so a dependency change busts it
       # and a source change does not. The first build is slow; the rest are not.
@@ -80,10 +86,6 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # The belt to the brace above: if libopus is compiled after all, this
-          # is the documented escape hatch for CMake 4 building a project that
-          # predates 3.5. Harmless when nothing needs it.
-          CMAKE_POLICY_VERSION_MINIMUM: '3.5'
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'Zetta Com ${{ github.ref_name }}'
