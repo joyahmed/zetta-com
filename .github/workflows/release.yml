@@ -24,25 +24,35 @@ jobs:
             args: --target aarch64-apple-darwin
           - platform: macos-latest
             args: --target x86_64-apple-darwin
-          - platform: ubuntu-22.04
+          - platform: ubuntu-latest
             args: ''
           - platform: windows-latest
             args: ''
 
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v4
+      # v5 runs on Node 24. v4 is pinned to Node 20, which the runners now
+      # force-upgrade with a deprecation warning on every job.
+      - uses: actions/checkout@v5
 
       # webkit2gtk is Tauri's renderer on Linux; libasound2-dev is what cpal
       # builds against for ALSA. Without the second one the audio crate fails
       # to compile, which reads as a Rust error and is really a missing header.
       - name: Linux dependencies
-        if: matrix.platform == 'ubuntu-22.04'
+        if: matrix.platform == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
-            libasound2-dev build-essential curl wget file libxdo-dev libssl-dev
+            libwebkit2gtk-4.1-dev librsvg2-dev patchelf \
+            libasound2-dev build-essential curl wget file libxdo-dev libssl-dev \
+            libayatana-appindicator3-dev
+
+      # libopus is C, and audiopus_sys builds it with cmake. Present on the
+      # GitHub runners, but pinned here so a runner image change cannot quietly
+      # break the build with an error that reads like Rust.
+      - name: macOS dependencies
+        if: matrix.platform == 'macos-latest'
+        run: brew list cmake >/dev/null 2>&1 || brew install cmake
 
       - uses: oven-sh/setup-bun@v2
         with:

@@ -1,17 +1,28 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-  macOS refuses microphone access outright unless the app declares why it wants
-  it, and the refusal is silent from the app's point of view: the device simply
-  never produces samples. Without this key the intercom would install, launch,
-  discover peers, and never transmit — the exact class of failure the rewrite
-  exists to delete.
-
-  The string is shown to the user in the permission prompt, so it is written for
-  them rather than for us.
--->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
   <dict>
+    <!--
+      macOS refuses microphone access outright unless the app declares why it
+      wants it, and the refusal is silent from the app's point of view: the
+      device simply never produces samples. Without this key the intercom would
+      install, launch, discover peers, and never transmit.
+
+      The string is shown in the permission prompt, so it is written for the
+      person reading it rather than for us.
+    -->
     <key>NSMicrophoneUsageDescription</key>
     <string>Zetta Com uses your microphone to talk to other computers on your network while you hold the talk key.</string>
+
+    <!--
+      Bonjour needs the service type declared or discovery returns nothing on
+      recent macOS, with no error worth reading.
+    -->
+    <key>NSBonjourServices</key>
+    <array>
+      <string>_zettacom._udp</string>
+    </array>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Zetta Com finds the other computers on your network so you do not have to type their addresses.</string>
   </dict>
 </plist>
