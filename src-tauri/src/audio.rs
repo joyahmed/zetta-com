@@ -31,6 +31,9 @@ use ringbuf::HeapRb;
 /// Note these are plain `u32`s: in cpal 0.18 `SampleRate` is a type alias, not
 /// the tuple struct it used to be, so there is no `.0` anywhere below.
 const OPUS_RATES: [u32; 5] = [48_000, 24_000, 16_000, 12_000, 8_000];
+/// Formats the stream callbacks below implement, best first. F32 is what
+/// WASAPI hands out natively on Windows, so it costs no conversion.
+const USABLE_FORMATS: [SampleFormat; 2] = [SampleFormat::F32, SampleFormat::I16];
 /// 20 ms at the highest rate — the largest frame any buffer here has to hold.
 const MAX_FRAME: usize = 960;
 /// A 20 ms Opus packet never exceeds 1275 bytes. This is slack.
@@ -278,13 +281,22 @@ fn pick(device: &Device, input: bool) -> Result<SupportedStreamConfig> {
         device.supported_output_configs()?.collect()
     };
 
+    // Rate first, then format, then fewest channels. Format has to be part of
+    // the choice: devices list several, and picking one the callbacks below do
+    // not implement gets rejected by the stream builder rather than by pick().
     for &hz in &OPUS_RATES {
-        if let Some(r) = ranges
-            .iter()
-            .filter(|r| r.min_sample_rate() <= hz && hz <= r.max_sample_rate())
-            .min_by_key(|r| r.channels())
-        {
-            return Ok(r.clone().with_sample_rate(hz));
+        for &fmt in &USABLE_FORMATS {
+            if let Some(r) = ranges
+                .iter()
+                .filter(|r| {
+                    r.sample_format() == fmt
+                        && r.min_sample_rate() <= hz
+                        && hz <= r.max_sample_rate()
+                })
+                .min_by_key(|r| r.channels())
+            {
+                return Ok(r.clone().with_sample_rate(hz));
+            }
         }
     }
 
@@ -301,7 +313,7 @@ fn pick(device: &Device, input: bool) -> Result<SupportedStreamConfig> {
         })
         .collect();
     Err(anyhow!(
-        "{} device has no Opus-compatible rate (48/24/16/12/8 kHz); it offers: {}",
+        "{} device offers no usable config (needs F32 or I16 at 48/24/16/12/8 kHz); it offers: {}",
         if input { "input" } else { "output" },
         offered.join(", ")
     ))
