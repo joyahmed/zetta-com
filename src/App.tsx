@@ -37,7 +37,7 @@ const App = () => {
 		running
 	} = useTransport();
 	const { messages, send } = useMessages(running);
-	const { manual, presets, add, remove, edit, rename } =
+	const { manual, presets, add, remove, edit, rename, reorder } =
 		useManualPeers(setError);
 	const { target, setTarget } = useTarget(setError);
 	const devices = useDevices(setError);
@@ -202,7 +202,8 @@ const App = () => {
 								manual,
 								onRename: rename,
 								onEdit: edit,
-								onRemove: remove
+								onRemove: remove,
+								onReorder: reorder
 							}}
 						/>
 					</div>

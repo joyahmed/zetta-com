@@ -184,6 +184,9 @@ type PcsProps = {
 	onRename: (addr: string, label: string) => Promise<void>;
 	onEdit: (from: string, to: string) => Promise<void>;
 	onRemove: (addr: string) => Promise<void>;
+	/// The full roster in the order wanted, by address. This decides which PC
+	/// each Ctrl+n reaches.
+	onReorder: (order: string[]) => Promise<void>;
 };
 
 type ModalProps = {

@@ -36,6 +36,7 @@ impl Default for Config {
             labels: HashMap::new(),
             talk_shortcut: default_talk_shortcut(),
             shortcuts: HashMap::new(),
+            order: Vec::new(),
             input_device: None,
             output_device: None,
             presets: default_presets(),
@@ -79,6 +80,16 @@ pub struct Config {
     /// default can be improved later without overriding somebody's choice.
     #[serde(default)]
     pub shortcuts: HashMap<String, String>,
+
+    /// The order PCs are shown in, by address, and so the order `Ctrl+1…9`
+    /// counts in. Anything not listed follows, by name.
+    ///
+    /// Chosen rather than alphabetical because the numbers are only worth
+    /// learning if they hold still. Sorted by name, the person you talk to most
+    /// is whichever letter they happen to start with, and adding one machine
+    /// renumbers everybody after it.
+    #[serde(default)]
+    pub order: Vec<String>,
 
     /// Microphone and speakers by name, or the system default when empty.
     ///

@@ -97,6 +97,7 @@ pub fn run() {
             commands::audio_devices,
             commands::set_audio_devices,
             commands::set_shortcut,
+            commands::set_order,
             keys::shortcuts,
         ])
         .setup(move |app| {
@@ -152,6 +153,7 @@ pub fn run() {
                 &cfg.peer,
                 &cfg.manual,
                 cfg.labels.clone(),
+                cfg.order.clone(),
                 commands::audio_prefs(&cfg),
                 ptt.clone(),
             ) {

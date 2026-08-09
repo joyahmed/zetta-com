@@ -30,13 +30,14 @@ pub fn net_start(
     let port = config::port_override().unwrap_or(port);
     let saved = config::load(&app).unwrap_or_default();
     let prefs = audio_prefs(&saved);
+    let saved_order = saved.order.clone();
     let (manual, labels) = (saved.manual, saved.labels);
     let mut guard = state.0.lock().map_err(|e| e.to_string())?;
     // Drop any existing transport before binding, or starting on the same port
     // fails with "address already in use" against ourselves.
     *guard = None;
     *guard = Some(
-        session::start(port, &peer, &manual, labels, prefs, ptt.0.clone()).map_err(|e| format!("{e:#}"))?,
+        session::start(port, &peer, &manual, labels, saved_order, prefs, ptt.0.clone()).map_err(|e| format!("{e:#}"))?,
     );
 
     // Saved only after a successful bind, so a setting that cannot work is
@@ -117,6 +118,31 @@ pub fn set_shortcut(
     Ok(l.clone())
 }
 
+/// Put the roster in the order you want, by address.
+///
+/// Applied in place, like a rename: this decides which PC is `Ctrl+1`, but it
+/// never reaches the socket, so it must not cost a rebind.
+///
+/// Only the addresses given are ordered — anything else follows by name. That
+/// means a machine you have never seen does not have to be in this list, and
+/// one you order today keeps its place when it goes offline and comes back.
+#[tauri::command]
+pub fn set_order(
+    app: tauri::AppHandle,
+    state: State<NetState>,
+    order: Vec<String>,
+) -> Result<(), String> {
+    let mut cfg = config::load(&app).unwrap_or_default();
+    cfg.order = order;
+    config::save(&app, &cfg).map_err(|e| format!("{e:#}"))?;
+
+    let guard = state.0.lock().map_err(|e| e.to_string())?;
+    if let Some(s) = guard.as_ref() {
+        s.set_order(cfg.order.clone());
+    }
+    Ok(())
+}
+
 /// Every microphone and every pair of speakers the machine can offer.
 #[tauri::command]
 pub fn audio_devices() -> (Vec<String>, Vec<String>) {
@@ -149,6 +175,7 @@ pub fn set_audio_devices(
                 &cfg.peer,
                 &cfg.manual,
                 cfg.labels.clone(),
+                cfg.order.clone(),
                 audio_prefs(&cfg),
                 ptt.0.clone(),
             )
@@ -196,7 +223,7 @@ pub fn manual_peers(
     if guard.is_some() {
         *guard = None;
         *guard = Some(
-            session::start(cfg.port, &cfg.peer, &cfg.manual, cfg.labels.clone(), audio_prefs(&cfg), ptt.0.clone())
+            session::start(cfg.port, &cfg.peer, &cfg.manual, cfg.labels.clone(), cfg.order.clone(), audio_prefs(&cfg), ptt.0.clone())
                 .map_err(|e| format!("{e:#}"))?,
         );
     }

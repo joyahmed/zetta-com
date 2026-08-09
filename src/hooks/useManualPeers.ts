@@ -75,6 +75,15 @@ export const useManualPeers = (onError: (message: string) => void) => {
 		}
 	};
 
+	/// The order the roster is shown in, and so the order Ctrl+1…9 counts in.
+	const reorder = async (order: string[]) => {
+		try {
+			await invoke('set_order', { order });
+		} catch (e) {
+			onError(String(e));
+		}
+	};
+
 	/// Your own name for a machine. Empty clears it and the discovered name
 	/// comes back.
 	const rename = async (addr: string, label: string) => {
@@ -85,5 +94,5 @@ export const useManualPeers = (onError: (message: string) => void) => {
 		}
 	};
 
-	return { manual, presets, add, remove, edit, rename };
+	return { manual, presets, add, remove, edit, rename, reorder };
 };

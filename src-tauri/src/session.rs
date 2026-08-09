@@ -42,6 +42,10 @@ pub struct Session {
     /// take effect — tearing down the socket and rebinding it for what is only
     /// ever a display name.
     labels: Mutex<HashMap<String, String>>,
+    /// The order the roster is shown in, by address. Behind a lock for the same
+    /// reason labels are: reordering is a display change and must not cost a
+    /// rebind of the socket.
+    order: Mutex<Vec<String>>,
     stop: Arc<AtomicBool>,
     /// Joined on drop, before the net handle's last reference goes with them.
     threads: Vec<thread::JoinHandle<()>>,
@@ -115,6 +119,15 @@ impl Session {
         *guard = labels;
     }
 
+    /// The order to show the roster in, applied to a running session.
+    pub fn set_order(&self, order: Vec<String>) {
+        let mut guard = match self.order.lock() {
+            Ok(o) => o,
+            Err(e) => e.into_inner(),
+        };
+        *guard = order;
+    }
+
     /// Empty when discovery could not start — which is a normal state on a
     /// network that filters mDNS, not a failure of the session.
     ///
@@ -165,7 +178,23 @@ impl Session {
                 }
             }
         }
-        peers.sort_by(|a, b| a.name.cmp(&b.name));
+        // Chosen order first, then the rest by name. The slot numbers the
+        // shortcuts use count down this list, so this is what decides which PC
+        // is Ctrl+1 — and it must not shuffle every time somebody is renamed or
+        // a new machine appears.
+        let order = match self.order.lock() {
+            Ok(o) => o,
+            Err(e) => e.into_inner(),
+        };
+        peers.sort_by(|a, b| {
+            let rank = |p: &discovery::Peer| {
+                order
+                    .iter()
+                    .position(|x| *x == p.addr.to_string())
+                    .unwrap_or(usize::MAX)
+            };
+            rank(a).cmp(&rank(b)).then_with(|| a.name.cmp(&b.name))
+        });
         peers
     }
 }
@@ -202,6 +231,7 @@ pub fn start(
     peer: &str,
     manual_entries: &[String],
     labels: HashMap<String, String>,
+    order: Vec<String>,
     audio_prefs: audio::Prefs,
     transmit: Arc<AtomicBool>,
 ) -> Result<Session> {
@@ -309,6 +339,7 @@ pub fn start(
         discovery,
         manual,
         labels: Mutex::new(labels),
+        order: Mutex::new(order),
         stop,
         threads: vec![pump_thread, sync_thread],
     })

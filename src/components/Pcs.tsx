@@ -10,7 +10,14 @@ import { Dot } from './Dot';
 ///
 /// Editing is deliberate now: one row at a time, with Save and Cancel, and the
 /// draft held outside the row so a poll cannot reach it.
-export const Pcs = ({ peers, manual, onRename, onEdit, onRemove }: PcsProps) => {
+export const Pcs = ({
+	peers,
+	manual,
+	onRename,
+	onEdit,
+	onRemove,
+	onReorder
+}: PcsProps) => {
 	const [editing, setEditing] = useState<string | null>(null);
 	const [name, setName] = useState('');
 	const [addr, setAddr] = useState('');
@@ -30,6 +37,19 @@ export const Pcs = ({ peers, manual, onRename, onEdit, onRemove }: PcsProps) => 
 			.filter(a => !peers.some(p => p.addr === a))
 			.map(a => ({ addr: a, name: a, manual: true, live: false }))
 	];
+
+	/// Send the whole list in its new order, not just the pair that swapped.
+	///
+	/// Rust orders by position in this list and puts anything absent from it
+	/// afterwards by name, so sending a partial list would silently drop every
+	/// machine not mentioned to the bottom.
+	const move = (i: number, by: number) => {
+		const next = rows.map(r => r.addr);
+		const to = i + by;
+		if (to < 0 || to >= next.length) return;
+		[next[i], next[to]] = [next[to], next[i]];
+		onReorder(next);
+	};
 
 	const begin = (r: PcRow) => {
 		setEditing(r.addr);
@@ -62,7 +82,7 @@ export const Pcs = ({ peers, manual, onRename, onEdit, onRemove }: PcsProps) => 
 		// Recessed against the panel it sits on. An outlined box with
 		// transparent rows reads as an empty frame rather than as a list.
 		<div className='overflow-hidden rounded-lg border border-line bg-sunken'>
-			{rows.map(r =>
+			{rows.map((r, i) =>
 				editing === r.addr ? (
 					<div
 						key={r.addr}
@@ -149,6 +169,30 @@ export const Pcs = ({ peers, manual, onRename, onEdit, onRemove }: PcsProps) => 
 						key={r.addr}
 						className='group flex items-center gap-2 border-b border-line-soft px-3 py-2 last:border-0'
 					>
+						{/* Up and down rather than dragging. The list is short,
+						    the target is a whole row, and a drag that has to be
+						    started, aimed and released is far easier to get
+						    wrong with a trackpad than two arrows are. */}
+						<div className='flex shrink-0 flex-col'>
+							<button
+								type='button'
+								onClick={() => move(i, -1)}
+								disabled={i === 0}
+								aria-label={`Move ${r.name} up`}
+								className='px-1 text-xs leading-none text-faint transition hover:text-ink disabled:opacity-25'
+							>
+								▲
+							</button>
+							<button
+								type='button'
+								onClick={() => move(i, 1)}
+								disabled={i === rows.length - 1}
+								aria-label={`Move ${r.name} down`}
+								className='px-1 text-xs leading-none text-faint transition hover:text-ink disabled:opacity-25'
+							>
+								▼
+							</button>
+						</div>
 						<Dot {...{ on: r.live }} />
 						<div className='min-w-0 flex-1'>
 							<p className='flex items-baseline gap-1.5 truncate text-sm font-medium'>
