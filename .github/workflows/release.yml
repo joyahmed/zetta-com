@@ -1,0 +1,78 @@
+name: release
+
+# Tauri does not cross-compile bundles: a .dmg needs macOS tooling, .deb and
+# .AppImage need Linux, and "targets: all" only ever means "all targets for the
+# platform you are on". So the platforms are the matrix — this is the only way
+# to get six artifacts from one push without owning three machines.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+jobs:
+  build:
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Apple silicon and Intel are separate binaries, not one build with a
+          # flag. A universal binary is possible but doubles the download for
+          # everybody to spare one group a choice.
+          - platform: macos-latest
+            args: --target aarch64-apple-darwin
+          - platform: macos-latest
+            args: --target x86_64-apple-darwin
+          - platform: ubuntu-22.04
+            args: ''
+          - platform: windows-latest
+            args: ''
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # webkit2gtk is Tauri's renderer on Linux; libasound2-dev is what cpal
+      # builds against for ALSA. Without the second one the audio crate fails
+      # to compile, which reads as a Rust error and is really a missing header.
+      - name: Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf \
+            libasound2-dev build-essential curl wget file libxdo-dev libssl-dev
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          # Only the mac runners need the extra triples; asking for them
+          # elsewhere is a download nobody uses.
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      # Keyed on the platform and the lockfile, so a dependency change busts it
+      # and a source change does not. The first build is slow; the rest are not.
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+          key: ${{ matrix.platform }}-${{ matrix.args }}
+
+      - run: bun install
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Zetta Com ${{ github.ref_name }}'
+          releaseBody: 'Built from ${{ github.sha }}.'
+          # Left as a draft on purpose: six artifacts arrive from four jobs at
+          # different times, and publishing before the last one lands would put
+          # a release out with platforms missing.
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}
