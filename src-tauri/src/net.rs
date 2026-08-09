@@ -596,7 +596,7 @@ pub fn start(
             // would see gaps that never existed.
             //
             // The payload is this machine's name, so a peer that was typed in
-            // by hand still ends up with something a human can read.
+            // manually still ends up with something a human can read.
             let name = local_name.as_bytes();
             let n = name.len().min(MAX_PAYLOAD);
             let mut buf = [0u8; HEADER_LEN + MAX_PAYLOAD];

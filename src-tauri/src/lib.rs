@@ -156,7 +156,7 @@ pub fn run() {
                 }
                 Err(e) => {
                     // Not fatal: the window still opens, stopped, so the
-                    // settings can be corrected by hand.
+                    // settings can be corrected manually.
                     eprintln!("[net] auto-start failed: {e:#}");
                     None
                 }

@@ -19,7 +19,7 @@ use tauri::{AppHandle, Manager};
 pub struct Config {
     pub port: u16,
     pub peer: String,
-    /// Addresses typed in by hand, kept alongside whatever mDNS finds.
+    /// Addresses typed in manually, kept alongside whatever mDNS finds.
     ///
     /// Discovery is not enough on its own: plenty of networks filter mDNS, a PC
     /// on another subnet is never discovered, and v1 kept a hand-maintained
@@ -110,7 +110,7 @@ pub fn port_override() -> Option<u16> {
 
 /// `None` when there is nothing saved yet, or when what is saved cannot be
 /// read. A corrupt config must not stop the app launching — it just means the
-/// window opens stopped, which is recoverable by hand.
+/// window opens stopped, which is recoverable manually.
 pub fn load(app: &AppHandle) -> Option<Config> {
     let p = path(app).ok()?;
     let raw = fs::read_to_string(&p).ok()?;

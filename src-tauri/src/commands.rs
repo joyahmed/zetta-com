@@ -103,7 +103,7 @@ pub fn manual_peers(
 
 /// Everyone discovered on the LAN, live or recently gone. Empty when the
 /// transport is stopped, and also on a network that filters mDNS — which is a
-/// normal condition, not an error, and the reason peers can be added by hand.
+/// normal condition, not an error, and the reason peers can be added manually.
 #[tauri::command]
 pub fn net_peers(state: State<NetState>) -> Result<Vec<discovery::Peer>, String> {
     Ok(state

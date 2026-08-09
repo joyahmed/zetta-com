@@ -216,7 +216,7 @@ pub fn start(
 
     // Discovery failing must not take the transport down with it. Plenty of
     // networks filter mDNS, and on those the app still works with a peer typed
-    // by hand — which is why manual entries exist at all.
+    // manually — which is why manual entries exist at all.
     let discovery = match discovery::start(port) {
         Ok(d) => Some(Arc::new(d)),
         Err(e) => {

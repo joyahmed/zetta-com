@@ -200,7 +200,7 @@ and playback made independently optional; and the transport auto-starting from
       to everyone *live* — if both went to the live set, two instances that had
       never heard each other would deadlock waiting for the other to speak. The
       manual address is now optional rather than required.
-- [x] Peers added by hand, merged with discovered ones (#12).
+- [x] Peers added manually, merged with discovered ones (#12).
 
 *Done when:* a second instance appears within a couple of seconds and greys out
 within the timeout when killed.
@@ -286,11 +286,11 @@ transport.
 Four things asked for after the plan was first written. They land inside the
 existing steps rather than after them.
 
-**Add PCs by hand** (step 3). The roster must not depend on mDNS alone: it is
+**Add PCs manually** (step 3). The roster must not depend on mDNS alone: it is
 dropped or filtered on plenty of networks, a PC on another subnet is never
 discovered, and v1 already kept a hand-maintained roster. The roster becomes the
 union of discovered and manually added peers, with the source visible, and
-manual entries persist. An address typed by hand is also the fix for the v1 case
+manual entries persist. An address typed manually is also the fix for the v1 case
 of a PC whose name would not resolve on the LAN at all.
 
 **A complete shortcut set** (step 4), not one push-to-talk key — but **no
@@ -334,5 +334,5 @@ remembered. The reasoning that is not obvious from the one-liners:
 - **Gate the once-a-second audio stats line** (step 6). It earns its place while
   the pipeline is being tuned and is noise afterwards.
 - **`tauri-specta`**, to generate the TypeScript types from the Rust structs.
-  The roster type crosses the IPC boundary by hand today, in `types.d.ts`, and
+  The roster type crosses the IPC boundary manually today, in `types.d.ts`, and
   a hand-written twin is a thing that drifts.
