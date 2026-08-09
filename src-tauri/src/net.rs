@@ -1,54 +1,228 @@
 //! UDP transport.
 //!
-//! Slice 1: prove datagrams move between two instances. No header, no audio —
-//! just enough to confirm the socket, the ports and the firewall are right
-//! before anything that matters rides on them.
+//! Started and stopped from the UI rather than from the environment, because
+//! discovery (step 3) and push-to-talk (step 4) both need to change peers while
+//! the app is running, and startup-only configuration would be written twice.
+//!
+//! Still no audio on the wire: the payload is a placeholder. What this proves
+//! is the socket, the ports, the firewall, and that a structured header
+//! survives the trip with its sequence intact.
 
-use std::net::UdpSocket;
+use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
+use serde::Serialize;
 
-/// Bind an IPv4 socket and start talking to `peer`.
+/// Bumped when the wire format changes. One byte that stops a future build's
+/// packets from being decoded as noise by this one.
+pub const VER: u8 = 1;
+pub const KIND_AUDIO: u8 = 0;
+pub const HEADER_LEN: usize = 8;
+
+/// ```text
+///  0        1        2                 4                              8
+///  ┌────────┬────────┬─────────────────┬──────────────────────────────┐
+///  │  ver   │  kind  │       seq       │          timestamp           │
+///  └────────┴────────┴─────────────────┴──────────────────────────────┘
+/// ```
+/// Big-endian, which is network byte order by convention and keeps a hexdump
+/// readable left to right. The choice matters less than never mixing it.
+#[derive(Debug, Clone, Copy)]
+pub struct Header {
+    pub ver: u8,
+    pub kind: u8,
+    pub seq: u16,
+    pub ts: u32,
+}
+
+impl Header {
+    pub fn write(&self, buf: &mut [u8]) {
+        buf[0] = self.ver;
+        buf[1] = self.kind;
+        buf[2..4].copy_from_slice(&self.seq.to_be_bytes());
+        buf[4..8].copy_from_slice(&self.ts.to_be_bytes());
+    }
+
+    /// `None` for anything too short or from another version. This is the only
+    /// place bytes from outside the process are interpreted, and anyone on the
+    /// LAN can send a one-byte datagram, so the length check comes before any
+    /// indexing rather than after it.
+    pub fn parse(buf: &[u8]) -> Option<Header> {
+        if buf.len() < HEADER_LEN {
+            return None;
+        }
+        let h = Header {
+            ver: buf[0],
+            kind: buf[1],
+            seq: u16::from_be_bytes([buf[2], buf[3]]),
+            ts: u32::from_be_bytes([buf[4], buf[5], buf[6], buf[7]]),
+        };
+        if h.ver != VER {
+            return None;
+        }
+        Some(h)
+    }
+}
+
+#[derive(Default)]
+struct Counters {
+    tx: AtomicU64,
+    rx: AtomicU64,
+    /// Datagrams rejected as too short or wrong version.
+    bad: AtomicU64,
+    /// Packets the sequence numbers say never arrived.
+    lost: AtomicU64,
+    last_seq: AtomicU64,
+}
+
+/// What the UI polls for. Serialised straight across the IPC boundary.
+#[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct Stats {
+    pub port: u16,
+    pub peer: String,
+    pub tx: u64,
+    pub rx: u64,
+    pub bad: u64,
+    pub lost: u64,
+    pub last_seq: u16,
+}
+
+/// Dropping this stops both threads, same contract as `audio::Handle`.
+pub struct Handle {
+    stop: Arc<AtomicBool>,
+    counters: Arc<Counters>,
+    port: u16,
+    peer: String,
+}
+
+impl Drop for Handle {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
+}
+
+impl Handle {
+    pub fn stats(&self) -> Stats {
+        Stats {
+            port: self.port,
+            peer: self.peer.clone(),
+            tx: self.counters.tx.load(Ordering::Relaxed),
+            rx: self.counters.rx.load(Ordering::Relaxed),
+            bad: self.counters.bad.load(Ordering::Relaxed),
+            lost: self.counters.lost.load(Ordering::Relaxed),
+            last_seq: self.counters.last_seq.load(Ordering::Relaxed) as u16,
+        }
+    }
+}
+
+/// Resolve to an IPv4 address specifically.
 ///
-/// The bind address is written `0.0.0.0` on purpose. An empty host binds
-/// IPv6-only on Windows and then silently discards every IPv4 datagram — the
-/// bug that made every v1 listener play perfect silence.
-pub fn start(port: u16, peer: String) -> Result<()> {
+/// A Windows PC name resolves IPv6-link-local first, and anything that takes
+/// the first address reaches nobody. Both of v1's "text arrived but voice did
+/// not" failures were this, on the sending side.
+fn resolve_v4(peer: &str) -> Result<SocketAddr> {
+    peer.to_socket_addrs()
+        .with_context(|| format!("resolving {peer}"))?
+        .find(SocketAddr::is_ipv4)
+        .ok_or_else(|| anyhow!("{peer} resolves to no IPv4 address"))
+}
+
+pub fn start(port: u16, peer: &str) -> Result<Handle> {
+    let dest = resolve_v4(peer)?;
+
+    // 0.0.0.0 written out on purpose. An empty host binds IPv6-only on Windows
+    // and then silently discards every IPv4 datagram — the bug that made every
+    // v1 listener play perfect silence.
     let socket =
         UdpSocket::bind(("0.0.0.0", port)).with_context(|| format!("binding 0.0.0.0:{port}"))?;
-    eprintln!("[net] bound 0.0.0.0:{port}, peer {peer}");
 
-    let tx = socket.try_clone().context("cloning socket for sender")?;
+    // Without this the receiver blocks in recv_from forever and never notices
+    // the stop flag, so every restart from the UI would leak a thread.
+    socket
+        .set_read_timeout(Some(Duration::from_millis(200)))
+        .context("setting read timeout")?;
+
+    eprintln!("[net] bound 0.0.0.0:{port}, peer {peer} -> {dest}");
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let counters = Arc::new(Counters::default());
+
+    let tx_sock = socket.try_clone().context("cloning socket for sender")?;
+    let tx_stop = stop.clone();
+    let tx_counters = counters.clone();
     thread::Builder::new().name("net-tx".into()).spawn(move || {
-        let mut n: u64 = 0;
-        loop {
-            n += 1;
-            let msg = format!("hello {n}");
-            if let Err(e) = tx.send_to(msg.as_bytes(), &peer) {
-                eprintln!("[net] tx failed: {e}");
+        let mut buf = [0u8; 64];
+        let mut seq: u16 = 0;
+        let mut ts: u32 = 0;
+        while !tx_stop.load(Ordering::Relaxed) {
+            let h = Header {
+                ver: VER,
+                kind: KIND_AUDIO,
+                seq,
+                ts,
+            };
+            h.write(&mut buf);
+            buf[HEADER_LEN..HEADER_LEN + 2].copy_from_slice(b"hi");
+
+            match tx_sock.send_to(&buf[..HEADER_LEN + 2], dest) {
+                Ok(_) => {
+                    tx_counters.tx.fetch_add(1, Ordering::Relaxed);
+                }
+                Err(e) => eprintln!("[net] tx failed: {e}"),
             }
+
+            seq = seq.wrapping_add(1);
+            // Placeholder. Becomes the sender's real frame size once audio
+            // rides on this, which is rate/50 and may be 320, not 960 — the
+            // receiver must never assume it.
+            ts = ts.wrapping_add(960);
             thread::sleep(Duration::from_millis(200));
         }
     })?;
 
+    let rx_stop = stop.clone();
+    let rx_counters = counters.clone();
     thread::Builder::new().name("net-rx".into()).spawn(move || {
         let mut buf = [0u8; 2048];
-        loop {
-            match socket.recv_from(&mut buf) {
-                Ok((len, from)) => eprintln!(
-                    "[net] rx {len} bytes from {from}: {}",
-                    String::from_utf8_lossy(&buf[..len])
-                ),
-                // Don't spin hot on a broken socket.
-                Err(e) => {
-                    eprintln!("[net] rx failed: {e}");
-                    thread::sleep(Duration::from_millis(200));
+        let mut expect: Option<u16> = None;
+
+        while !rx_stop.load(Ordering::Relaxed) {
+            let len = match socket.recv_from(&mut buf) {
+                Ok((len, _from)) => len,
+                // Timeouts are how this loop breathes; they are not errors.
+                Err(_) => continue,
+            };
+
+            let Some(h) = Header::parse(&buf[..len]) else {
+                rx_counters.bad.fetch_add(1, Ordering::Relaxed);
+                continue;
+            };
+
+            if let Some(want) = expect {
+                // seq is u16 and wraps every ~22 minutes of talking at 50
+                // packets a second, so this is wrapping_sub and not `>`. A
+                // plain comparison stalls permanently at the wrap.
+                let ahead = h.seq.wrapping_sub(want);
+                if ahead > 0 && ahead < 0x8000 {
+                    rx_counters.lost.fetch_add(ahead as u64, Ordering::Relaxed);
                 }
             }
+            expect = Some(h.seq.wrapping_add(1));
+
+            rx_counters.rx.fetch_add(1, Ordering::Relaxed);
+            rx_counters.last_seq.store(h.seq as u64, Ordering::Relaxed);
         }
     })?;
 
-    Ok(())
+    Ok(Handle {
+        stop,
+        counters,
+        port,
+        peer: peer.to_string(),
+    })
 }
