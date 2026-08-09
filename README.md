@@ -17,14 +17,33 @@ arrives as a notification on their screen.
 - **Messages.** Type, or fire a preset with a key. They arrive as native
   notifications when the window is hidden.
 - **Finds everyone by itself.** mDNS discovery — no addresses to type on a
-  normal network. Machines that discovery cannot reach can be added by hand.
+  normal network. Machines that discovery cannot reach can be added manually.
 - **Says who is actually there.** A heartbeat every two seconds; somebody who
   goes quiet greys out within seven. It reports absence, not just presence.
-- **Names you choose.** `DEVS002` is not Rafi. Rename any machine.
+- **Names you choose.** `DEVS002` is not Rafi. Rename any machine, correct an
+  address you typed wrong, or remove it — all in one list.
 
 ## Getting it
 
-Grab an installer from [releases](../../releases), or build it yourself:
+Grab an installer from [releases](../../releases), or build it yourself.
+
+**On macOS, the first launch will say the app is "damaged."** It is not. The
+builds are unsigned, and Gatekeeper refuses a quarantined bundle that carries no
+signature. Move it to `/Applications`, then clear the quarantine flag:
+
+```bash
+xattr -cr "/Applications/Zetta Com.app"
+```
+
+You will need this again after every new download, until the builds are signed.
+
+**Then open System Settings → Privacy & Security → Local Network and turn Zetta
+Com on.** macOS normally asks for local network access the first time an app
+wants it, but clearing quarantine can mean the prompt never appears — and
+without that permission the app looks like it is running perfectly while hearing
+nobody at all.
+
+Building it yourself:
 
 ```bash
 bun install
@@ -51,6 +70,7 @@ intercom. **Quit** is in the tray menu.
 | `Ctrl+Alt+0` (hold) | talk to everyone |
 | `Ctrl+Shift+1…9` | message that PC |
 | `Ctrl+Shift+0` | message everyone |
+| `Ctrl+Alt+S` | start or stop |
 | `Ctrl+Alt+A` | add a PC |
 | `Ctrl+Alt+T` | open the window |
 | `Ctrl+Alt+K` | show all shortcuts |
