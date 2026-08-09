@@ -22,4 +22,16 @@ tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+cpal = "0.18.1"
+ringbuf = "0.5.1"
+audiopus = "0.2.0"
+anyhow = "1.0.104"
+
+# Not used directly. cpal 0.18.1 declares `windows` and `windows-core` as two
+# independent ">=0.61, <=0.62" ranges. Tauri holds `windows` at 0.61, nothing
+# holds `windows-core`, so cargo takes 0.62 for it — and cpal's WASAPI backend
+# then implements a COM interface from one version against a trait from the
+# other and will not compile. Naming it here keeps both halves on 0.61.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-core = "0.61"
 
