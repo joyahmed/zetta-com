@@ -69,7 +69,7 @@ const App = () => {
 			{/* The main screen is the two things this app is: who you are
 			    talking to, and what has been said. Everything else is behind
 			    the bar. */}
-			<main className='flex flex-1 flex-col gap-4 p-4'>
+			<main className='mx-auto flex w-full max-w-md flex-1 flex-col gap-4 p-4'>
 				{error && <Alert {...{ message: error }} />}
 
 				{running && <TalkBar {...{ held, key_: 'F8', to }} />}

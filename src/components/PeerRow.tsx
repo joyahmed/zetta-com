@@ -10,7 +10,7 @@ export const PeerRow = ({ peer, selected, onSelect, slot }: PeerRowProps) => (
 				: 'border-slate-200 bg-white hover:border-slate-300 dark:border-slate-800 dark:bg-slate-900'
 		}`}
 	>
-		<Dot on={peer.live} />
+		<Dot {...{ on: peer.live }} />
 		{/* The position is the shortcut: Ctrl+Alt+N holds to talk to this
 		    machine, Ctrl+Shift+N aims at it and opens the window. Shown so
 		    nobody has to learn which row is which. */}

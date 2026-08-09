@@ -40,23 +40,23 @@ export const Nav = ({
 				Zetta Com
 			</h1>
 			<p className='flex items-center gap-1.5 truncate text-xs text-slate-500 dark:text-slate-400'>
-				<Dot on={running} />
+				<Dot {...{ on: running }} />
 				{me ? me : ' '}
 			</p>
 		</div>
 
-		<IconButton label='Add a PC' onClick={onAddPc}>
+		<IconButton {...{ label: 'Add a PC', onClick: onAddPc }}>
 			<svg width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round'>
 				<path d='M12 5v14M5 12h14' />
 			</svg>
 		</IconButton>
-		<IconButton label='Shortcuts' onClick={onShortcuts}>
+		<IconButton {...{ label: 'Shortcuts', onClick: onShortcuts }}>
 			<svg width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round'>
 				<rect x='2' y='6' width='20' height='12' rx='2' />
 				<path d='M6 10h.01M10 10h.01M14 10h.01M18 10h.01M8 14h8' />
 			</svg>
 		</IconButton>
-		<IconButton label='Settings' onClick={onSettings}>
+		<IconButton {...{ label: 'Settings', onClick: onSettings }}>
 			<svg width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round'>
 				<circle cx='12' cy='12' r='3' />
 				<path d='M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 7 19.4a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0-1.2-2.9H1a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 2.6 7a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H7a1.7 1.7 0 0 0 1-1.5V1a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V7a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z' />

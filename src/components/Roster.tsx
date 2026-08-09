@@ -52,10 +52,12 @@ export const Roster = ({ peers, running, target, onTarget }: RosterProps) => {
 			{peers.map((p, i) => (
 				<PeerRow
 					key={p.id}
-					peer={p}
-					selected={target === p.addr}
-					onSelect={() => onTarget(p.addr)}
-					slot={i + 1}
+					{...{
+						peer: p,
+						selected: target === p.addr,
+						onSelect: () => onTarget(p.addr),
+						slot: i + 1
+					}}
 				/>
 			))}
 		</section>
