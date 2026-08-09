@@ -14,7 +14,33 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+/// The port everything binds unless a config says otherwise.
+pub const DEFAULT_PORT: u16 = 9001;
+
+/// Deliberately **not** `#[derive(Default)]`.
+///
+/// `#[serde(default = "…")]` only fills a field that is *missing from a file
+/// being parsed*. A derived `Default` ignores those attributes entirely and
+/// hands back `u16::default()` and `String::default()` — so
+/// `config::load(app).unwrap_or_default()`, which is the path taken on a fresh
+/// install where no file exists yet, produced `port: 0` and an **empty
+/// talk_shortcut**. An empty spec makes `keys::bind` return early, so the first
+/// run of a push-to-talk application had no push-to-talk key, and nothing
+/// anywhere reported it: the shortcut list only lists keys that were attempted.
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            port: DEFAULT_PORT,
+            peer: String::new(),
+            manual: Vec::new(),
+            labels: HashMap::new(),
+            talk_shortcut: default_talk_shortcut(),
+            presets: default_presets(),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
 pub struct Config {
     pub port: u16,
@@ -123,6 +149,21 @@ pub fn load(app: &AppHandle) -> Option<Config> {
             c.presets.retain(|p| {
                 !SHIPPED.contains(&p.text.as_str()) && !SHIPPED.contains(&p.label.as_str())
             });
+
+            // Repair a config written before `Config` had a real `Default`.
+            // The derived one produced an empty talk shortcut, and any save
+            // after that wrote the empty string to disk — where serde reads it
+            // back happily, because the field is present. Fixing the default
+            // alone would leave every machine that has already run the app
+            // without a push-to-talk key, permanently and silently.
+            if c.talk_shortcut.trim().is_empty() {
+                eprintln!("[config] talk shortcut was empty, restoring the default");
+                c.talk_shortcut = default_talk_shortcut();
+            }
+            if c.port == 0 {
+                c.port = DEFAULT_PORT;
+            }
+
             Some(c)
         }
         Err(e) => {
