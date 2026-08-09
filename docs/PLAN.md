@@ -120,25 +120,25 @@ playback ← ring B ← mixer ◄── per-peer decoders ◄── net rx
 Sequenced so the riskiest thing is proven first, and every slice runs and shows
 something before the next one starts.
 
-> ### ▶ Next: **3d — fan-out to everyone**
+> ### ▶ Next: **4 — push-to-talk**
 >
-> The last step where the app still talks to one address. Send each encoded
-> frame to every live peer, and give each remote talker its own Opus decoder and
-> its own reorder window — decoder state is a running conversation with one
-> encoder, so sharing one across peers produces garbage. A mixer sums them into
-> the playback ring.
+> Every microphone is currently open all the time, and everyone sends
+> continuously. Push-to-talk closes that: a global shortcut, nothing sent unless
+> the key is held, and local playback muted while transmitting.
 >
-> **Selecting a single peer stops existing here**, and with it the address field.
+> **That mute is the whole echo strategy** — the reason full duplex and acoustic
+> echo cancellation were rejected at the start. It is also what makes the app
+> usable with speakers instead of a headset.
 >
-> After that step 3 is done and step 4 is push-to-talk.
+> Then the full shortcut set (#13), and peers added by hand (#12) closes step 3.
 
 | Step | | |
 |---|---|---|
 | 0 | Skeleton | ✅ done |
 | 1 | Audio loopback in-process | ✅ done |
 | 2 | Transport | ✅ done |
-| 3 | Discovery and presence | ◐ 3a ✅ 3b ✅ 3c ✅ · **3d next** |
-| 4 | Push-to-talk | ☐ |
+| 3 | Discovery and presence | ✅ done (manual peers #12 outstanding) |
+| 4 | Push-to-talk | ☐ **next** |
 | 5 | Text and notifications | ☐ |
 | 6 | Packaging | ☐ |
 
@@ -182,8 +182,11 @@ and playback made independently optional; and the transport auto-starting from
       timeout. `live` now means "heard from recently" rather than "mDNS
       mentioned it once" — mDNS answers who exists, the socket answers who is
       present.
-- [ ] **3d** ← **next.** Fan-out to every live peer; per-peer decoder, per-peer
-      jitter buffer, mixer. **Selecting a single peer stops existing here.**
+- [x] **3d** Fan-out to every live peer; per-peer decoder, per-peer reorder
+      window, mixer summing in i32. Heartbeats go to everyone *known* and audio
+      to everyone *live* — if both went to the live set, two instances that had
+      never heard each other would deadlock waiting for the other to speak. The
+      manual address is now optional rather than required.
 - [ ] Peers added by hand, merged with discovered ones (#12).
 
 *Done when:* a second instance appears within a couple of seconds and greys out
