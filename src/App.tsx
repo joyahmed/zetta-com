@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { AddPc } from './components/AddPc';
 import { Alert } from './components/Alert';
 import { Connection } from './components/Connection';
+import { Devices } from './components/Devices';
 import { Diagnostics } from './components/Diagnostics';
 import { Messages } from './components/Messages';
 import { Modal } from './components/Modal';
@@ -17,6 +18,7 @@ import { useManualPeers } from './hooks/useManualPeers';
 import { useMessages } from './hooks/useMessages';
 import { usePtt } from './hooks/usePtt';
 import { useShortcuts } from './hooks/useShortcuts';
+import { useDevices } from './hooks/useDevices';
 import { useTarget } from './hooks/useTarget';
 import { useTransport } from './hooks/useTransport';
 
@@ -38,6 +40,7 @@ const App = () => {
 	const { manual, presets, add, remove, edit, rename } =
 		useManualPeers(setError);
 	const { target, setTarget } = useTarget(setError);
+	const devices = useDevices(setError);
 	const {
 		shortcuts,
 		showShortcuts,
@@ -171,6 +174,22 @@ const App = () => {
 			>
 				<div className='flex flex-col gap-5'>
 					<Connection {...{ port, onPort: setPort, disabled: running }} />
+
+					<div className='flex flex-col gap-2'>
+						<h3 className='text-xs font-medium tracking-wide text-muted uppercase'>
+							Audio
+						</h3>
+						<Devices
+							{...{
+								inputs: devices.inputs,
+								outputs: devices.outputs,
+								input: devices.input,
+								output: devices.output,
+								onChoose: devices.choose,
+								onRefresh: devices.refresh
+							}}
+						/>
+					</div>
 
 					<div className='flex flex-col gap-2'>
 						<h3 className='text-xs font-medium tracking-wide text-muted uppercase'>

@@ -51,18 +51,60 @@ const DEVICE_POLL: Duration = Duration::from_millis(1_000);
 /// Pause before rebuilding, so a device that is flapping cannot spin the loop
 /// and so the previous generation's threads have let go first.
 const RETRY_DELAY: Duration = Duration::from_millis(700);
+/// Consecutive one-second polls with no playback callback at all before the
+/// stream is declared dead. Three rather than one: a machine waking from sleep
+/// or a driver reloading can stall briefly and recover on its own, and a
+/// rebuild is an audible interruption.
+const DEAD_STREAM_POLLS: u32 = 3;
 
-/// A fingerprint of the current default devices, used to notice a change.
+/// Which devices to use, by name, or the system default when `None`.
+///
+/// Names rather than indices: an index is meaningless the moment a device is
+/// plugged in or removed, and it would silently start pointing at somebody
+/// else's headset. A name that disappears falls back to the default and says
+/// so, which is recoverable; an index that shifts is not even detectable.
+#[derive(Clone, Debug, Default)]
+pub struct Prefs {
+    pub input: Option<String>,
+    pub output: Option<String>,
+}
+
+/// Everything the host can offer, for the picker in Settings.
+pub fn devices() -> (Vec<String>, Vec<String>) {
+    let host = cpal::default_host();
+    let ins = host
+        .input_devices()
+        .map(|it| it.map(|d| device_name(&d)).collect())
+        .unwrap_or_default();
+    let outs = host
+        .output_devices()
+        .map(|it| it.map(|d| device_name(&d)).collect())
+        .unwrap_or_default();
+    (ins, outs)
+}
+
+/// A fingerprint of the devices actually in use, so the poll notices a change.
 ///
 /// Polled rather than only signalled, because a device *appearing* raises no
 /// stream error: the app that started with no microphone is exactly the one
 /// that will never be told when one is plugged in.
-fn describe_devices() -> (Option<String>, Option<String>) {
+///
+/// It accounts for the preference, not just the system default: with a device
+/// pinned by name, the default changing underneath is none of our business, and
+/// rebuilding on it would tear the stream down for nothing.
+fn describe_devices(prefs: &Prefs) -> (Option<String>, Option<String>) {
     let host = cpal::default_host();
-    (
-        host.default_input_device().map(|d| device_name(&d)),
-        host.default_output_device().map(|d| device_name(&d)),
-    )
+    let resolve = |want: &Option<String>, input: bool| -> Option<String> {
+        if let Some(name) = want {
+            return Some(name.clone());
+        }
+        if input {
+            host.default_input_device().map(|d| device_name(&d))
+        } else {
+            host.default_output_device().map(|d| device_name(&d))
+        }
+    };
+    (resolve(&prefs.input, true), resolve(&prefs.output, false))
 }
 
 /// Dropping this stops the pipeline: the audio thread sees the flag, returns,
@@ -83,6 +125,11 @@ impl Drop for Handle {
 struct Streams {
     _input: Option<cpal::Stream>,
     _output: Option<cpal::Stream>,
+    /// Handed back so the poll loop can watch the playback callback for signs
+    /// of life. A stream can be open, healthy by every API it exposes, and
+    /// never called again — which is what happens when the app starts at login
+    /// before the audio endpoint is ready.
+    stats: Arc<Stats>,
 }
 
 /// Counters, so a glitch says which link produced it instead of being guessed
@@ -97,6 +144,10 @@ struct Stats {
     frames: AtomicU64,
     /// Output callbacks that produced silence because ring B was short.
     underruns: AtomicU64,
+    /// Every output callback, silent or not. Counts as a pulse: if this stops
+    /// advancing while a stream is open, the driver is no longer asking for
+    /// audio and playback is dead however healthy it looks.
+    out_calls: AtomicU64,
     /// Times playback had to re-bank after running dry. A steady count here is
     /// the signature of a periodic stutter.
     primes: AtomicU64,
@@ -140,7 +191,7 @@ pub struct Pipeline {
 /// echo strategy, and the reason full duplex and acoustic echo cancellation
 /// were rejected at the start: the echo path never exists, so there is nothing
 /// to cancel.
-pub fn start(transmit: Arc<AtomicBool>) -> Result<Pipeline> {
+pub fn start(transmit: Arc<AtomicBool>, prefs: Prefs) -> Result<Pipeline> {
     let stop = Arc::new(AtomicBool::new(false));
     let (ready_tx, ready_rx) = mpsc::channel::<Result<()>>();
 
@@ -174,6 +225,7 @@ pub fn start(transmit: Arc<AtomicBool>) -> Result<Pipeline> {
                     &transmit,
                     out_tx.clone(),
                     in_rx.clone(),
+                    &prefs,
                 );
 
                 let streams = match built {
@@ -199,7 +251,11 @@ pub fn start(transmit: Arc<AtomicBool>) -> Result<Pipeline> {
                 };
 
                 // Watch for the reason to start over.
-                let watching = describe_devices();
+                let watching = describe_devices(&prefs);
+                let has_output = streams._output.is_some();
+                let mut last_pulse = streams.stats.out_calls.load(Ordering::Relaxed);
+                let mut quiet = 0u32;
+
                 while !thread_stop.load(Ordering::Relaxed)
                     && !rebuild.load(Ordering::Relaxed)
                 {
@@ -208,9 +264,36 @@ pub fn start(transmit: Arc<AtomicBool>) -> Result<Pipeline> {
                     // raises no stream error at all — and that is the case that
                     // bites: the app starts with no microphone, one is plugged
                     // in, and nothing ever tells it.
-                    if describe_devices() != watching {
+                    if describe_devices(&prefs) != watching {
                         eprintln!("[audio] default devices changed, rebuilding");
                         break;
+                    }
+
+                    // A stream can be open, report no error, and never be
+                    // called again. That is what an app started at login before
+                    // the audio endpoint was ready looks like from in here: the
+                    // device name has not changed, so the check above is happy,
+                    // and playback is silent until the session is restarted.
+                    // Logging out and back in should not be the remedy for
+                    // anything.
+                    //
+                    // The playback callback runs on the driver's clock whether
+                    // or not there is anything to play, so it stopping is not
+                    // ambiguous the way a silent counter would be.
+                    if has_output {
+                        let pulse = streams.stats.out_calls.load(Ordering::Relaxed);
+                        if pulse == last_pulse {
+                            quiet += 1;
+                            if quiet >= DEAD_STREAM_POLLS {
+                                eprintln!(
+                                    "[audio] playback has not been called for {DEAD_STREAM_POLLS}s, rebuilding"
+                                );
+                                break;
+                            }
+                        } else {
+                            quiet = 0;
+                            last_pulse = pulse;
+                        }
                     }
                 }
 
@@ -246,6 +329,7 @@ fn build(
     transmit: &Arc<AtomicBool>,
     out_tx: SyncSender<Frame>,
     in_rx: SharedFrames,
+    prefs: &Prefs,
 ) -> Result<Streams> {
     let host = cpal::default_host();
 
@@ -254,8 +338,8 @@ fn build(
     // has not connected, or whose mic is off in privacy settings — must still
     // hear everyone. Losing playback because there is no capture device is
     // exactly backwards.
-    let in_sel = select(&host, true);
-    let out_sel = select(&host, false);
+    let in_sel = select(&host, true, prefs.input.as_deref());
+    let out_sel = select(&host, false, prefs.output.as_deref());
 
     if in_sel.is_none() && out_sel.is_none() {
         eprintln!("[audio] no usable audio device at all — text only");
@@ -306,9 +390,11 @@ fn build(
     // One line a second. Cheap enough to leave in while the pipeline is being
     // tuned, and it turns "it sounds wrong" into a number that names the link.
     let report_stop = stop.clone();
+    let report_stats = stats.clone();
     thread::Builder::new()
         .name("audio-stats".into())
         .spawn(move || {
+            let stats = report_stats;
             let (mut p_drops, mut p_frames, mut p_under, mut p_primes) = (0u64, 0u64, 0u64, 0u64);
             while !report_stop.load(Ordering::Relaxed) {
                 thread::sleep(Duration::from_secs(1));
@@ -339,6 +425,7 @@ fn build(
     Ok(Streams {
         _input: input_stream,
         _output: output_stream,
+        stats,
     })
 }
 
@@ -527,6 +614,7 @@ fn build_playback(
             device.build_output_stream(
                 stream_cfg.clone(),
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                    st.out_calls.fetch_add(1, Ordering::Relaxed);
                     // Silent while transmitting. This is the echo prevention:
                     // without it the speakers play the far end into the open
                     // microphone and everyone hears themselves back.
@@ -568,6 +656,7 @@ fn build_playback(
             device.build_output_stream(
                 stream_cfg.clone(),
                 move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
+                    st.out_calls.fetch_add(1, Ordering::Relaxed);
                     if out_transmit.load(Ordering::Relaxed) {
                         data.fill(0);
                         return;
@@ -692,12 +781,33 @@ fn build_playback(
 /// The default device for a direction and a config we can actually use, or
 /// `None` with the reason logged. Returning `None` rather than an error is the
 /// point: one missing direction must not take the other down with it.
-fn select(host: &Host, input: bool) -> Option<(Device, SupportedStreamConfig)> {
+fn select(
+    host: &Host,
+    input: bool,
+    want: Option<&str>,
+) -> Option<(Device, SupportedStreamConfig)> {
     let which = if input { "input" } else { "output" };
-    let device = if input {
-        host.default_input_device()
-    } else {
-        host.default_output_device()
+
+    // A chosen device that is no longer present falls back to the default and
+    // says so. Refusing to start because a headset was unplugged would be the
+    // wrong trade for an app whose job is to be reachable.
+    let chosen = want.and_then(|name| {
+        let list = if input {
+            host.input_devices().ok()
+        } else {
+            host.output_devices().ok()
+        };
+        let found = list.and_then(|mut it| it.find(|d| device_name(d) == name));
+        if found.is_none() {
+            eprintln!("[audio] chosen {which} device {name:?} is not here, using the default");
+        }
+        found
+    });
+
+    let device = match chosen {
+        Some(d) => Some(d),
+        None if input => host.default_input_device(),
+        None => host.default_output_device(),
     };
     let device = match device {
         Some(d) => d,

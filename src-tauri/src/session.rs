@@ -202,6 +202,7 @@ pub fn start(
     peer: &str,
     manual_entries: &[String],
     labels: HashMap<String, String>,
+    audio_prefs: audio::Prefs,
     transmit: Arc<AtomicBool>,
 ) -> Result<Session> {
     // The typed Address is just another manual peer. It used to be handled
@@ -216,7 +217,7 @@ pub fn start(
     }
     let manual = manual_peers(&entries);
 
-    let pipeline = audio::start(transmit)?;
+    let pipeline = audio::start(transmit, audio_prefs)?;
     let net = Arc::new(net::start(
         port,
         peer,

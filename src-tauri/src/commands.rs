@@ -9,7 +9,7 @@ use std::sync::atomic::Ordering;
 use tauri::State;
 
 use crate::state::{NetState, Ptt};
-use crate::{config, discovery, net, session};
+use crate::{audio, config, discovery, net, session};
 
 #[tauri::command]
 pub fn greet(name: &str) -> String {
@@ -29,13 +29,14 @@ pub fn net_start(
     // cannot be dragged back onto the first one's port by the shared config.
     let port = config::port_override().unwrap_or(port);
     let saved = config::load(&app).unwrap_or_default();
+    let prefs = audio_prefs(&saved);
     let (manual, labels) = (saved.manual, saved.labels);
     let mut guard = state.0.lock().map_err(|e| e.to_string())?;
     // Drop any existing transport before binding, or starting on the same port
     // fails with "address already in use" against ourselves.
     *guard = None;
     *guard = Some(
-        session::start(port, &peer, &manual, labels, ptt.0.clone()).map_err(|e| format!("{e:#}"))?,
+        session::start(port, &peer, &manual, labels, prefs, ptt.0.clone()).map_err(|e| format!("{e:#}"))?,
     );
 
     // Saved only after a successful bind, so a setting that cannot work is
@@ -52,6 +53,65 @@ pub fn net_start(
         if let Err(e) = config::save(&app, &cfg) {
             eprintln!("[config] not saved: {e:#}");
         }
+    }
+    Ok(())
+}
+
+/// The saved device names, in the shape `audio` wants them.
+///
+/// An empty string means "no preference" rather than a device called "" — that
+/// is what clearing a field leaves behind, and it would otherwise be a name
+/// nothing can ever match.
+pub fn audio_prefs(cfg: &config::Config) -> audio::Prefs {
+    let some = |s: &Option<String>| {
+        s.as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
+    };
+    audio::Prefs {
+        input: some(&cfg.input_device),
+        output: some(&cfg.output_device),
+    }
+}
+
+/// Every microphone and every pair of speakers the machine can offer.
+#[tauri::command]
+pub fn audio_devices() -> (Vec<String>, Vec<String>) {
+    audio::devices()
+}
+
+/// Choose a microphone or speakers, or clear either back to the system default.
+///
+/// Rebinds, because the pipeline chooses its devices when it is built. Renaming
+/// a PC no longer restarts anything, but this genuinely has to.
+#[tauri::command]
+pub fn set_audio_devices(
+    app: tauri::AppHandle,
+    state: State<NetState>,
+    ptt: State<Ptt>,
+    input: Option<String>,
+    output: Option<String>,
+) -> Result<(), String> {
+    let mut cfg = config::load(&app).unwrap_or_default();
+    cfg.input_device = input;
+    cfg.output_device = output;
+    config::save(&app, &cfg).map_err(|e| format!("{e:#}"))?;
+
+    let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+    if guard.is_some() {
+        *guard = None;
+        *guard = Some(
+            session::start(
+                config::port_override().unwrap_or(cfg.port),
+                &cfg.peer,
+                &cfg.manual,
+                cfg.labels.clone(),
+                audio_prefs(&cfg),
+                ptt.0.clone(),
+            )
+            .map_err(|e| format!("{e:#}"))?,
+        );
     }
     Ok(())
 }
@@ -94,7 +154,7 @@ pub fn manual_peers(
     if guard.is_some() {
         *guard = None;
         *guard = Some(
-            session::start(cfg.port, &cfg.peer, &cfg.manual, cfg.labels.clone(), ptt.0.clone())
+            session::start(cfg.port, &cfg.peer, &cfg.manual, cfg.labels.clone(), audio_prefs(&cfg), ptt.0.clone())
                 .map_err(|e| format!("{e:#}"))?,
         );
     }

@@ -116,6 +116,21 @@ export const DEMO_MESSAGES: Message[] = [
 	{ id: 13, from: 'Salman', text: 'Smoke passed, deploying', mine: false, at: at(9, 41) }
 ];
 
+export const DEMO_DEVICES = {
+	inputs: [
+		'Headset Microphone (Jabra Evolve 40)',
+		'Microphone Array (Realtek Audio)',
+		'Webcam (Logitech C920)'
+	],
+	outputs: [
+		'Headset Earphone (Jabra Evolve 40)',
+		'Speakers (Realtek Audio)',
+		'DELL U2520D (NVIDIA High Definition Audio)'
+	],
+	input: 'Headset Microphone (Jabra Evolve 40)',
+	output: 'Headset Earphone (Jabra Evolve 40)'
+};
+
 export const DEMO_PRESETS: Preset[] = [
 	{ label: 'On my way', text: 'On my way', shortcut: '' },
 	{ label: 'Need you here', text: 'Need you here', shortcut: '' },

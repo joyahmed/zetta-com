@@ -19,7 +19,19 @@ type Config = {
 	peer: string;
 	manual: string[];
 	talkShortcut: string;
+	/// Chosen microphone and speakers by name. Null means the system default.
+	inputDevice: string | null;
+	outputDevice: string | null;
 	presets: Preset[];
+};
+
+type DevicesProps = {
+	inputs: string[];
+	outputs: string[];
+	input: string;
+	output: string;
+	onChoose: (next: { input?: string; output?: string }) => Promise<void>;
+	onRefresh: () => Promise<void>;
 };
 
 type PresetsProps = {

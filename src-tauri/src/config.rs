@@ -35,6 +35,8 @@ impl Default for Config {
             manual: Vec::new(),
             labels: HashMap::new(),
             talk_shortcut: default_talk_shortcut(),
+            input_device: None,
+            output_device: None,
             presets: default_presets(),
         }
     }
@@ -70,6 +72,17 @@ pub struct Config {
     /// nothing else tends to claim.
     #[serde(default = "default_talk_shortcut")]
     pub talk_shortcut: String,
+
+    /// Microphone and speakers by name, or the system default when empty.
+    ///
+    /// Worth choosing rather than always taking the default: the default input
+    /// on a Windows PC is regularly a webcam microphone or a virtual device
+    /// left behind by a meeting app, and the failure is silent — the stream
+    /// opens, the counters move, and nobody hears anything.
+    #[serde(default)]
+    pub input_device: Option<String>,
+    #[serde(default)]
+    pub output_device: Option<String>,
 
     /// Canned messages, each on its own key. This is what "auto message" means
     /// here: a short editable list sent with one keystroke and no typing —
