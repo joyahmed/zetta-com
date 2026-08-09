@@ -47,12 +47,16 @@ jobs:
             libasound2-dev build-essential curl wget file libxdo-dev libssl-dev \
             libayatana-appindicator3-dev
 
-      # libopus is C, and audiopus_sys builds it with cmake. Present on the
-      # GitHub runners, but pinned here so a runner image change cannot quietly
-      # break the build with an error that reads like Rust.
+      # libopus is C. audiopus_sys will link a system copy if pkg-config finds
+      # one and otherwise compiles the vendored source with cmake — and the
+      # vendored source is old enough to declare a cmake_minimum_required below
+      # 3.5, which CMake 4 refuses outright. Homebrew ships cmake 4; Ubuntu's
+      # apt still ships 3, which is exactly why Linux built and macOS did not.
+      #
+      # Installing opus means the compile does not happen at all.
       - name: macOS dependencies
         if: matrix.platform == 'macos-latest'
-        run: brew list cmake >/dev/null 2>&1 || brew install cmake
+        run: brew install opus pkg-config cmake
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -76,6 +80,10 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # The belt to the brace above: if libopus is compiled after all, this
+          # is the documented escape hatch for CMake 4 building a project that
+          # predates 3.5. Harmless when nothing needs it.
+          CMAKE_POLICY_VERSION_MINIMUM: '3.5'
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'Zetta Com ${{ github.ref_name }}'
