@@ -214,9 +214,12 @@ This is the thing the old version could never do, and it removes most of the
 
 ### 5. Text and notifications
 
-- [ ] **5a** `kind=1` UTF-8 messages on the same socket.
-- [ ] **5b** Native notifications.
-- [ ] **5c** Message log.
+- [x] **5a** `kind=1` UTF-8 messages on the same socket. Text does not ride the
+      audio sequence — it is not a stream, and advancing that counter would
+      punch holes in the reorder window at the far end.
+- [ ] **5b** Native notifications. ← **next**
+- [x] **5c** Message log. Sent lines are logged whether or not anybody was live,
+      so an empty roster cannot be mistaken for a broken keyboard.
 - [ ] Voice and text kept separate as actions and code paths (#14).
 - [ ] Preset messages, one shortcut each (#15).
 
