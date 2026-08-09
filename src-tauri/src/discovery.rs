@@ -43,7 +43,7 @@ pub struct Peer {
     /// Set by the session from the socket, not by discovery: audio arriving is
     /// what "talking" means, and mDNS has nothing to say about it.
     pub talking: bool,
-    /// Typed in by hand rather than discovered. Worth showing: a manual entry
+    /// Typed in manually rather than discovered. Worth showing: a manual entry
     /// that never goes live is a wrong address, where a discovered one that
     /// goes quiet is a switched-off PC, and those want different reactions.
     pub manual: bool,
@@ -94,12 +94,25 @@ impl Discovery {
     }
 }
 
-/// This machine's name, for the roster. `COMPUTERNAME` on Windows is what
-/// people recognise, and it is what v1's roster used.
+/// This machine's name, for the roster. `COMPUTERNAME` is tried first so
+/// Windows keeps showing exactly what v1's roster showed; `gethostname` comes
+/// after it because macOS and Linux hand a GUI-launched app an environment with
+/// neither variable set, and this fell all the way through to the literal
+/// string "unknown" on both — which is then what every other machine displayed.
 pub fn local_name() -> String {
-    std::env::var("COMPUTERNAME")
-        .or_else(|_| std::env::var("HOSTNAME"))
-        .unwrap_or_else(|_| "unknown".to_string())
+    if let Ok(n) = std::env::var("COMPUTERNAME") {
+        if !n.is_empty() {
+            return n;
+        }
+    }
+    let host = gethostname::gethostname().to_string_lossy().into_owned();
+    // macOS answers "Joys-MacBook-Pro.local". Left alone that becomes the mDNS
+    // hostname "Joys-MacBook-Pro.local.local." below, which resolves for nobody.
+    let host = host.strip_suffix(".local").unwrap_or(&host).trim().to_string();
+    if host.is_empty() {
+        return "unknown".to_string();
+    }
+    host
 }
 
 /// A value unique to this process, used to recognise our own advertisement.
@@ -201,6 +214,23 @@ pub fn start(port: u16) -> Result<Discovery> {
                             continue;
                         };
 
+                        // Port 0 is not an address anything can be sent to.
+                        // mdns-sd will hand over a record whose SRV half has
+                        // not arrived yet, and accepting one listed the Mac in
+                        // the Windows roster as 192.168.0.188:0 — a peer that
+                        // looks present and is unreachable, which is worse than
+                        // not listing it at all. Skipping is safe rather than
+                        // final: the daemon re-resolves and sends another
+                        // ServiceResolved once the record is complete.
+                        let port = info.get_port();
+                        if port == 0 {
+                            eprintln!(
+                                "[mdns] {} resolved with port 0, ignoring",
+                                info.get_fullname()
+                            );
+                            continue;
+                        }
+
                         let key = info.get_fullname().to_string();
                         // The friendly name rides in TXT; the label is a
                         // fallback for anything advertising without it.
@@ -211,7 +241,7 @@ pub fn start(port: u16) -> Result<Discovery> {
                         if name.is_empty() {
                             name = key.split('.').next().unwrap_or(&key).to_string();
                         }
-                        let addr = SocketAddr::new(ip, info.get_port());
+                        let addr = SocketAddr::new(ip, port);
 
                         let mut map = match ev_peers.lock() {
                             Ok(m) => m,

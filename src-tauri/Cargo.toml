@@ -1,6 +1,6 @@
 [package]
 name = "zetta-com"
-version = "1.0.0"
+version = "1.1.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -30,6 +30,7 @@ mdns-sd = "0.20.3"
 tauri-plugin-global-shortcut = "2.3.2"
 tauri-plugin-notification = "2.3.3"
 tauri-plugin-single-instance = "2.4.3"
+gethostname = "1.1.0"
 
 # Not used directly. cpal 0.18.1 declares `windows` and `windows-core` as two
 # independent ">=0.61, <=0.62" ranges. Tauri holds `windows` at 0.61, nothing
