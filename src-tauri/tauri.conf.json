@@ -22,7 +22,8 @@
         "maxHeight": 1400,
         "maximizable": false,
         "decorations": false,
-        "transparent": true
+        "transparent": true,
+        "visible": false
       }
     ],
     "security": {

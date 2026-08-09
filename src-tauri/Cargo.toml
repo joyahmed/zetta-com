@@ -52,6 +52,7 @@ gethostname = "1.1.0"
 chacha20poly1305 = "0.11.0"
 sha2 = "0.11.0"
 getrandom = "0.4.3"
+tauri-plugin-autostart = "2.5.1"
 
 # Not used directly. cpal 0.18.1 declares `windows` and `windows-core` as two
 # independent ">=0.61, <=0.62" ranges. Tauri holds `windows` at 0.61, nothing

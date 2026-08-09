@@ -41,10 +41,12 @@ pub enum Action {
     // in your head.
     /// Show the list of every key and what it does.
     ShowShortcuts,
-    /// Bring the window up from the tray. v1 stamped this on a Start Menu
-    /// shortcut and let Explorer dispatch it; here it is a real global key, so
-    /// it works whether or not anything is pinned.
-    ShowWindow,
+    /// The round trip to the tray on one key: put the window away when you are
+    /// looking at it, bring it back when you are not. v1 stamped this on a Start
+    /// Menu shortcut and let Explorer dispatch it; here it is a real global key,
+    /// so it works whether or not anything is pinned — and one key you can press
+    /// twice beats one that only ever opens.
+    ToggleWindow,
 }
 
 /// One row of the shortcut list the UI shows.
@@ -81,7 +83,14 @@ pub const EDITABLE: [(&str, &str, &str); 6] = [
     // one that sometimes silently does nothing — the exact failure this list
     // exists to expose. This is also the key people already reach for to wake
     // the app.
-    ("open-window", "Open the window", "CommandOrControl+Alt+KeyT"),
+    // The id stays "open-window" although the key now closes as well: it is what
+    // an existing config saves a rebind under, and changing it would silently
+    // throw that choice away.
+    (
+        "open-window",
+        "Show or hide the window",
+        "CommandOrControl+Alt+KeyT",
+    ),
     ("show-shortcuts", "Show shortcuts", "F1"),
 ];
 
@@ -227,10 +236,49 @@ pub fn bind(
 
 /// Bring the main window back from the tray. Both the tray menu and several
 /// keys need it, so it lives beside them.
+///
+/// Unminimize as well as show: a minimized window is still "visible" as far as
+/// Windows is concerned, so `show()` alone leaves it in the taskbar and the key
+/// looks dead.
 pub fn reveal(app: &tauri::AppHandle) {
     if let Some(w) = app.get_webview_window("main") {
+        let _ = w.unminimize();
         let _ = w.show();
         let _ = w.set_focus();
+    }
+}
+
+/// Is the window actually in front of the user right now?
+///
+/// Minimized counts as away, not present — see [`reveal`]. Anything the platform
+/// refuses to answer is treated as away, because the failure that matters is a
+/// key that will not bring the window back; a key that shows an already-shown
+/// window costs a flicker.
+fn on_screen(w: &tauri::WebviewWindow) -> bool {
+    w.is_visible().unwrap_or(false) && !w.is_minimized().unwrap_or(false)
+}
+
+/// Put the window away, or bring it back — whichever is the opposite of now.
+///
+/// `mind_focus` is what separates the two callers. From the keyboard the window
+/// may well be visible behind whatever is being worked in, and the press means
+/// "bring it here", so an unfocused window is raised rather than hidden. A tray
+/// click cannot ask that question: clicking the tray takes focus away from the
+/// window first, so it would always read as unfocused and the icon would never
+/// close anything.
+pub fn toggle(app: &tauri::AppHandle, mind_focus: bool) {
+    let Some(w) = app.get_webview_window("main") else {
+        return;
+    };
+    let away = if mind_focus {
+        !on_screen(&w) || !w.is_focused().unwrap_or(false)
+    } else {
+        !on_screen(&w)
+    };
+    if away {
+        reveal(app);
+    } else {
+        let _ = w.hide();
     }
 }
 
@@ -333,9 +381,11 @@ pub fn dispatch(
                 let _ = app.emit("show-shortcuts", ());
             }
         }
-        Action::ShowWindow => {
+        // On press only, and a toggle: pressing it on the way down and again on
+        // the way up would hide and re-show the window in one keystroke.
+        Action::ToggleWindow => {
             if pressed {
-                reveal(app);
+                toggle(app, true);
             }
         }
     }
@@ -367,7 +417,7 @@ pub fn register_all(
             "talk-all" => Action::TalkAll,
             "message-all" => Action::MessageAll,
             "start-stop" => Action::ToggleTransport,
-            "open-window" => Action::ShowWindow,
+            "open-window" => Action::ToggleWindow,
             "show-shortcuts" => Action::ShowShortcuts,
             _ => continue,
         };

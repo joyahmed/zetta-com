@@ -12,6 +12,7 @@ import { Presets } from './components/Presets';
 import { Room } from './components/Room';
 import { Roster } from './components/Roster';
 import { Shortcuts } from './components/Shortcuts';
+import { Startup } from './components/Startup';
 import { TalkBar } from './components/TalkBar';
 import { Targets } from './components/Targets';
 import { useLocalName } from './hooks/useLocalName';
@@ -19,6 +20,7 @@ import { useManualPeers } from './hooks/useManualPeers';
 import { useMessages } from './hooks/useMessages';
 import { usePtt } from './hooks/usePtt';
 import { useShortcuts } from './hooks/useShortcuts';
+import { useStartup } from './hooks/useStartup';
 import { useDevices } from './hooks/useDevices';
 import { useRoom } from './hooks/useRoom';
 import { useTarget } from './hooks/useTarget';
@@ -44,6 +46,7 @@ const App = () => {
 	const { target, setTarget } = useTarget(setError);
 	const devices = useDevices(setError);
 	const room = useRoom(setError);
+	const startup = useStartup(setError);
 	const {
 		shortcuts,
 		setShortcut,
@@ -178,6 +181,21 @@ const App = () => {
 			>
 				<div className='flex flex-col gap-5'>
 					<Connection {...{ port, onPort: setPort, disabled: running }} />
+
+					<div className='flex flex-col gap-2'>
+						<h3 className='text-xs font-medium tracking-wide text-muted uppercase'>
+							Startup
+						</h3>
+						<Startup
+							{...{
+								on: startup.on,
+								onChoose: startup.choose,
+								delay: startup.delay,
+								onDelay: startup.setDelay,
+								onCommit: startup.commit
+							}}
+						/>
+					</div>
 
 					<div className='flex flex-col gap-2'>
 						<h3 className='text-xs font-medium tracking-wide text-muted uppercase'>

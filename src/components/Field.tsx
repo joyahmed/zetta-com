@@ -2,6 +2,7 @@ export const Field = ({
 	label,
 	value,
 	onChange,
+	onBlur,
 	disabled,
 	placeholder,
 	className = ''
@@ -13,6 +14,7 @@ export const Field = ({
 		<input
 			value={value}
 			onChange={e => onChange(e.currentTarget.value)}
+			onBlur={onBlur}
 			disabled={disabled}
 			placeholder={placeholder}
 			className='rounded-lg border border-line bg-surface px-3 py-2 font-mono text-sm text-ink outline-none transition placeholder:text-faint focus:border-accent disabled:cursor-not-allowed disabled:opacity-55'

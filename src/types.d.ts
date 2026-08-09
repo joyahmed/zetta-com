@@ -25,6 +25,16 @@ type Config = {
 	inputDevice: string | null;
 	outputDevice: string | null;
 	presets: Preset[];
+	/// Seconds a login start waits before binding. Zero means no wait.
+	startDelay: number;
+};
+
+type StartupProps = {
+	on: boolean;
+	onChoose: (next: boolean) => void;
+	delay: string;
+	onDelay: (v: string) => void;
+	onCommit: () => void;
 };
 
 type RoomProps = {
@@ -107,6 +117,9 @@ type FieldProps = {
 	label: string;
 	value: string;
 	onChange: (v: string) => void;
+	/// For a value worth committing once rather than on every keystroke — a
+	/// number being typed passes through smaller numbers on the way.
+	onBlur?: () => void;
 	disabled?: boolean;
 	placeholder?: string;
 	className?: string;

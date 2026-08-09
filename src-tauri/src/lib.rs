@@ -26,10 +26,42 @@ use tauri::{
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager, WindowEvent,
 };
+use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::ShortcutState;
 
-use keys::{reveal, Bindings, BindingsState, ShortcutList, Shortcuts};
+use keys::{reveal, toggle, Bindings, BindingsState, ShortcutList, Shortcuts};
 use state::{NetState, Ptt};
+
+/// Bring the transport up from the saved settings, or report why it could not.
+///
+/// `None` is not fatal: the window still opens, stopped, so whatever is wrong
+/// can be corrected by hand. Shared by the launch path and the delayed one so
+/// there is one description of what auto-start means.
+fn bring_up(
+    port: u16,
+    cfg: &config::Config,
+    ptt: &Arc<AtomicBool>,
+) -> Option<session::Session> {
+    match session::start(
+        port,
+        &cfg.peer,
+        &cfg.manual,
+        cfg.labels.clone(),
+        cfg.order.clone(),
+        cfg.passphrase.clone(),
+        commands::audio_prefs(cfg),
+        ptt.clone(),
+    ) {
+        Ok(s) => {
+            eprintln!("[net] auto-started on {port} -> {}", cfg.peer);
+            Some(s)
+        }
+        Err(e) => {
+            eprintln!("[net] auto-start failed: {e:#}");
+            None
+        }
+    }
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -72,6 +104,15 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_notification::init())
+        // Start with the machine, off, in the tray. An intercom that has to be
+        // launched is one that is not listening when somebody calls you — and
+        // the person calling gets silence, which looks exactly like being
+        // ignored. The flag is what tells the app it was Windows that started
+        // it and not a person; see `config::autostarted`.
+        .plugin(tauri_plugin_autostart::init(
+            MacosLauncher::LaunchAgent,
+            Some(vec![config::AUTOSTART_FLAG]),
+        ))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(move |app, shortcut, event| {
@@ -110,9 +151,25 @@ pub fn run() {
             commands::room_new,
             commands::room_code,
             commands::set_passphrase,
+            commands::set_start_delay,
             keys::shortcuts,
         ])
         .setup(move |app| {
+            // The window is configured hidden, and revealed here — before
+            // anything that can fail, so a broken tray leaves a visible window
+            // rather than a process with no way to reach it.
+            //
+            // It is configured that way because the alternative is worse on the
+            // one launch that matters: a login start would paint the whole
+            // window, then hide it a moment later, so every boot would flash the
+            // app on screen and take focus off whatever the user was doing.
+            let autostarted = config::autostarted();
+            if !autostarted {
+                reveal(app.handle());
+            } else {
+                eprintln!("[app] started by Windows — staying in the tray");
+            }
+
             let show = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &quit])?;
@@ -127,6 +184,12 @@ pub fn run() {
                     "quit" => app.exit(0),
                     _ => {}
                 })
+                // Left click toggles, the way a tray icon is expected to: it is
+                // the same one gesture that put the window away. Focus is not
+                // consulted here — clicking the tray has already taken focus off
+                // the window, so asking would answer "not focused" every time
+                // and the icon could only ever open. The menu's Show stays a
+                // plain show: an item that says Show and hides is a lie.
                 .on_tray_icon_event(|tray, event| {
                     if let TrayIconEvent::Click {
                         button: MouseButton::Left,
@@ -134,7 +197,7 @@ pub fn run() {
                         ..
                     } = event
                     {
-                        reveal(tray.app_handle());
+                        toggle(tray.app_handle(), false);
                     }
                 })
                 .build(app)?;
@@ -160,28 +223,45 @@ pub fn run() {
             // The port is resolved once and then reported: a log that
             // misreports which port is in use is worse than no log.
             let port = config::port_override().unwrap_or(cfg.port);
-            let session = match session::start(
-                port,
-                &cfg.peer,
-                &cfg.manual,
-                cfg.labels.clone(),
-                cfg.order.clone(),
-                cfg.passphrase.clone(),
-                commands::audio_prefs(&cfg),
-                ptt.clone(),
-            ) {
-                Ok(s) => {
-                    eprintln!("[net] auto-started on {port} -> {}", cfg.peer);
-                    Some(s)
-                }
-                Err(e) => {
-                    // Not fatal: the window still opens, stopped, so the
-                    // settings can be corrected manually.
-                    eprintln!("[net] auto-start failed: {e:#}");
-                    None
-                }
-            };
-            app.manage(NetState(Mutex::new(session)));
+
+            // On a login start, wait before binding — see `config::start_delay`.
+            // Windows runs the Run key while it is still bringing the network
+            // up, so binding immediately fails against an adapter that has no
+            // address yet, and mDNS advertises on a stack that is not there.
+            //
+            // The state is managed empty first and filled from the thread,
+            // because `manage` can only be called once and the commands must
+            // exist from the moment the window loads either way.
+            let delay = if autostarted { cfg.start_delay } else { 0 };
+            if delay == 0 {
+                app.manage(NetState(Mutex::new(bring_up(port, &cfg, &ptt))));
+            } else {
+                app.manage(NetState(Mutex::new(None)));
+                eprintln!("[net] waiting {delay}s for the network before binding");
+                let handle = app.handle().clone();
+                let ptt = ptt.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(delay));
+                    // Re-read rather than reusing the config from launch: the
+                    // window has been up for the whole wait, and the port may
+                    // have been changed in it.
+                    let cfg = config::load(&handle).unwrap_or_default();
+                    let port = config::port_override().unwrap_or(cfg.port);
+                    let state = handle.state::<NetState>();
+                    let mut guard = match state.0.lock() {
+                        Ok(g) => g,
+                        Err(e) => e.into_inner(),
+                    };
+                    // Somebody pressed Start during the wait. Binding now would
+                    // drop a transport that is already working and rebind the
+                    // same port, which is the one thing this delay exists to
+                    // avoid doing at a moment nobody is watching.
+                    if guard.is_some() {
+                        return eprintln!("[net] already started by hand — not auto-starting");
+                    }
+                    *guard = bring_up(port, &cfg, &ptt);
+                });
+            }
 
             Ok(())
         })

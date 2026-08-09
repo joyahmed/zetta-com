@@ -406,6 +406,21 @@ pub fn config_get(app: tauri::AppHandle) -> Option<config::Config> {
     config::load(&app)
 }
 
+/// How long a login start waits before binding, in seconds.
+///
+/// Clamped rather than validated: this is a number typed into a box, and the
+/// only two ways to get it wrong are a wait so long the intercom is deaf for
+/// half the morning, and a negative one. Five minutes is past any plausible
+/// boot; zero is a legitimate answer and means "do not wait".
+#[tauri::command]
+pub fn set_start_delay(app: tauri::AppHandle, seconds: u64) -> Result<u64, String> {
+    let seconds = seconds.min(300);
+    let mut cfg = config::load(&app).unwrap_or_default();
+    cfg.start_delay = seconds;
+    config::save(&app, &cfg).map_err(|e| format!("{e:#}"))?;
+    Ok(seconds)
+}
+
 #[tauri::command]
 pub fn net_stop(state: State<NetState>) -> Result<(), String> {
     *state.0.lock().map_err(|e| e.to_string())? = None;

@@ -41,6 +41,7 @@ impl Default for Config {
             input_device: None,
             output_device: None,
             presets: default_presets(),
+            start_delay: default_start_delay(),
         }
     }
 }
@@ -118,6 +119,14 @@ pub struct Config {
     /// not auto-replies, and not scheduled announcements.
     #[serde(default = "default_presets")]
     pub presets: Vec<Preset>,
+
+    /// Seconds to wait before binding, when Windows started the app at login.
+    ///
+    /// Zero disables it. Only applied on a login start — pressing Start, or
+    /// launching by hand, binds immediately, because then there is somebody
+    /// watching who can read the error.
+    #[serde(default = "default_start_delay")]
+    pub start_delay: u64,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -133,6 +142,25 @@ pub struct Preset {
 
 fn default_talk_shortcut() -> String {
     "F8".to_string()
+}
+
+/// Ten seconds, counted from the moment Windows launches the app — which is
+/// already after the boot itself, so this is only the tail: WiFi associating and
+/// the audio endpoints being enumerated, both of which finish after the login
+/// shell has run its Run key.
+///
+/// Not a timeout on the socket. That binds `0.0.0.0` and succeeds with no
+/// network at all, which is exactly why the failure this guards against is
+/// silent — what is actually early is `discovery`, which registers its
+/// advertisement against whichever interfaces exist at that instant, and audio,
+/// which picks a device from whatever has enumerated so far. Both come up
+/// looking fine and simply find nobody.
+///
+/// Waiting is an admission of a race rather than a fix for one. The alternative
+/// is polling the network stack for "ready", and there is no definition of ready
+/// that mDNS and WASAPI both agree with.
+fn default_start_delay() -> u64 {
+    10
 }
 
 /// Empty on purpose.
@@ -163,6 +191,19 @@ fn path(app: &AppHandle) -> Result<PathBuf> {
 /// only happens while testing, and it is exactly when it is most confusing.
 ///
 /// `zetta-com.exe --port 9002`
+/// Did Windows start this at login, rather than a person?
+///
+/// The autostart plugin is told to append this when it writes the Run entry, so
+/// the flag is set by the same code that created the entry — nothing has to be
+/// kept in step with a registry value written months ago.
+pub fn autostarted() -> bool {
+    std::env::args().skip(1).any(|a| a == AUTOSTART_FLAG)
+}
+
+/// Passed to the plugin and looked for by [`autostarted`]. One constant, so the
+/// two cannot drift apart — a typo here would be a flag nobody ever sees set.
+pub const AUTOSTART_FLAG: &str = "--autostart";
+
 pub fn port_override() -> Option<u16> {
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
