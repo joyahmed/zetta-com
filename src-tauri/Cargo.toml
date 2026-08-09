@@ -14,6 +14,22 @@ edition = "2021"
 name = "zetta_com_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+# The release binary was 11 MB with none of this — cargo's defaults leave
+# symbols in and optimise each crate separately.
+#
+# `opt-level` stays at 3 rather than dropping to "s". Audio is the one thing
+# here with a deadline: the encoder, the mixer and the resampler all run per
+# 20 ms frame, and trading their speed for a smaller download would be the wrong
+# way round for an intercom.
+[profile.release]
+# Across crate boundaries, so the ring buffer and codec calls inline. Slower to
+# build; the CI cache absorbs that and a release is cut rarely.
+lto = true
+codegen-units = 1
+# Debug symbols are of no use in a binary nobody can attach to, and they are the
+# largest single thing in it.
+strip = true
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
