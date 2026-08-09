@@ -44,7 +44,7 @@ export const Messages = ({ messages, onSend, disabled, to }: MessagesProps) => {
 						<span className='shrink-0 font-medium'>
 							{m.mine ? 'You' : m.from}
 						</span>
-						<span className='break-words'>{m.text}</span>
+						<span className='wrap-break-word'>{m.text}</span>
 					</div>
 				))}
 				<div ref={end} />

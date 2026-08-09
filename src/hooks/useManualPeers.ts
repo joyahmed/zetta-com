@@ -34,5 +34,15 @@ export const useManualPeers = (onError: (message: string) => void) => {
 		}
 	};
 
-	return { manual, presets, add, remove };
+	/// Your own name for a machine. Empty clears it and the discovered name
+	/// comes back.
+	const rename = async (addr: string, label: string) => {
+		try {
+			await invoke('set_label', { addr, label });
+		} catch (e) {
+			onError(String(e));
+		}
+	};
+
+	return { manual, presets, add, remove, rename };
 };

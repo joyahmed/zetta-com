@@ -9,6 +9,7 @@
 //! playback ← ring B ← decoder ◄── frames_in ◄────────── net rx
 //! ```
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::RecvTimeoutError;
@@ -33,6 +34,9 @@ pub struct Session {
     /// Resolved once at start. Changing the list restarts the session, which is
     /// simpler than mutating it live and happens rarely enough not to matter.
     manual: Vec<discovery::Peer>,
+    /// Your name for a machine, by address. Overrides everything else, being
+    /// the only name anybody chose deliberately.
+    labels: HashMap<String, String>,
     stop: Arc<AtomicBool>,
 }
 
@@ -64,16 +68,14 @@ impl Session {
     /// is the session's job, since it is the only layer that holds both the
     /// socket and the roster.
     pub fn messages(&self) -> Vec<net::Message> {
+        // The merged roster, not just what discovery found. A hand-added PC is
+        // absent from discovery entirely, so looking there left its messages
+        // labelled with an address — and an address is not who said something.
         let names: Vec<(String, String)> = self
-            .discovery
-            .as_ref()
-            .map(|d| {
-                d.peers()
-                    .into_iter()
-                    .map(|p| (p.addr.to_string(), p.name))
-                    .collect()
-            })
-            .unwrap_or_default();
+            .peers()
+            .into_iter()
+            .map(|p| (p.addr.to_string(), p.name))
+            .collect();
 
         let mut msgs = self.net.messages();
         for m in &mut msgs {
@@ -124,6 +126,14 @@ impl Session {
                     p.name = name;
                 }
             }
+            // Your own name wins over both. A PC name is what the machine calls
+            // itself; this is what you call the person sitting at it, and it is
+            // the only one anybody chose on purpose.
+            if let Some(label) = self.labels.get(&p.addr.to_string()) {
+                if !label.trim().is_empty() {
+                    p.name = label.clone();
+                }
+            }
         }
         peers.sort_by(|a, b| a.name.cmp(&b.name));
         peers
@@ -161,6 +171,7 @@ pub fn start(
     port: u16,
     peer: &str,
     manual_entries: &[String],
+    labels: HashMap<String, String>,
     transmit: Arc<AtomicBool>,
 ) -> Result<Session> {
     // The typed Address is just another manual peer. It used to be handled
@@ -257,6 +268,7 @@ pub fn start(
         net,
         discovery,
         manual,
+        labels,
         stop,
     })
 }

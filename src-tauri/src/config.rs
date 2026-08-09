@@ -6,6 +6,7 @@
 //! clicking anything — that is how v1's listener behaved, and requiring a
 //! button press was a regression dressed up as a feature.
 
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -29,6 +30,15 @@ pub struct Config {
     /// otherwise adding a setting would silently reset everyone's port.
     #[serde(default)]
     pub manual: Vec<String>,
+
+    /// Your own name for a machine, by address — "Rafi" rather than "DEVS002".
+    ///
+    /// A PC name is what the machine calls itself, which is rarely what you
+    /// call the person sitting at it. This wins over both the discovered name
+    /// and the one carried in heartbeats, because it is the only one somebody
+    /// chose on purpose.
+    #[serde(default)]
+    pub labels: HashMap<String, String>,
 
     /// Hold this to talk. A single key by default so it can be *held*, and one
     /// nothing else tends to claim.
@@ -109,8 +119,10 @@ pub fn load(app: &AppHandle) -> Option<Config> {
             // Drop the pleasantries an earlier build shipped. Removing them
             // from the defaults did nothing for anyone who had already run it,
             // because they were written to disk on the first successful bind.
-            c.presets
-                .retain(|p| !matches!(p.text.as_str(), "On my way" | "Lunch?" | "Call me"));
+            const SHIPPED: [&str; 3] = ["On my way", "Lunch?", "Call me"];
+            c.presets.retain(|p| {
+                !SHIPPED.contains(&p.text.as_str()) && !SHIPPED.contains(&p.label.as_str())
+            });
             Some(c)
         }
         Err(e) => {

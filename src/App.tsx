@@ -5,6 +5,7 @@ import { Diagnostics } from './components/Diagnostics';
 import { Messages } from './components/Messages';
 import { Modal } from './components/Modal';
 import { Nav } from './components/Nav';
+import { PcNames } from './components/PcNames';
 import { Presets } from './components/Presets';
 import { Roster } from './components/Roster';
 import { Shortcuts } from './components/Shortcuts';
@@ -34,7 +35,7 @@ const App = () => {
 		running
 	} = useTransport();
 	const { messages, send } = useMessages(running);
-	const { manual, presets, add, remove } = useManualPeers(setError);
+	const { manual, presets, add, remove, rename } = useManualPeers(setError);
 	const { target, setTarget } = useTarget(setError);
 	const {
 		shortcuts,
@@ -47,7 +48,7 @@ const App = () => {
 
 	// Named for the talk bar and the message box, so it always says who is
 	// about to be addressed rather than leaving it to be remembered.
-	const targetName =
+	const to =
 		target === null
 			? 'everyone'
 			: (peers.find(p => p.addr === target)?.name ?? target);
@@ -55,14 +56,13 @@ const App = () => {
 	return (
 		<div className='flex min-h-screen flex-col bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100'>
 			<Nav
-				me={me}
-				running={running}
-				onToggle={running ? stop : start}
-				onAddPc={() => setShowAddPc(true)}
-				onShortcuts={() => setShowShortcuts(true)}
-				onSettings={() => setShowSettings(true)}
 				{...{
-					me
+					me,
+					running,
+					onToggle: running ? stop : start,
+					onAddPc: () => setShowAddPc(true),
+					onShortcuts: () => setShowShortcuts(true),
+					onSettings: () => setShowSettings(true)
 				}}
 			/>
 
@@ -70,58 +70,77 @@ const App = () => {
 			    talking to, and what has been said. Everything else is behind
 			    the bar. */}
 			<main className='flex flex-1 flex-col gap-4 p-4'>
-				{error && <Alert message={error} />}
+				{error && <Alert {...{ message: error }} />}
 
-				{running && <TalkBar held={held} key_='F8' to={targetName} />}
+				{running && <TalkBar {...{ held, key_: 'F8', to }} />}
 
 				<Roster
-					peers={peers}
-					running={running}
-					target={target}
-					onTarget={setTarget}
+					{...{
+						peers,
+						running,
+						target,
+						onTarget: setTarget
+					}}
 				/>
 
-				<Presets presets={presets} onSend={send} disabled={!running} />
+				<Presets {...{ presets, onSend: send, disabled: !running }} />
 
 				<Messages
-					messages={messages}
-					onSend={send}
-					disabled={!running}
-					to={targetName}
+					{...{
+						messages,
+						onSend: send,
+						disabled: !running,
+						to
+					}}
 				/>
 			</main>
 
 			<Modal
-				title='Shortcuts'
-				open={showShortcuts}
-				onClose={() => setShowShortcuts(false)}
+				{...{
+					title: 'Shortcuts',
+					open: showShortcuts,
+					onClose: () => setShowShortcuts(false)
+				}}
 			>
-				<Shortcuts shortcuts={shortcuts} />
+				<Shortcuts {...{ shortcuts }} />
 			</Modal>
 
 			<Modal
-				title='Add a PC'
-				open={showAddPc}
-				onClose={() => setShowAddPc(false)}
+				{...{
+					title: 'PCs',
+					open: showAddPc,
+					onClose: () => setShowAddPc(false)
+				}}
 			>
 				<Advanced
-					port={port}
-					peer={peer}
-					onPort={setPort}
-					onPeer={setPeer}
-					disabled={running}
-					manual={manual}
-					onAdd={add}
-					onRemove={remove}
+					{...{
+						port,
+						peer,
+						onPort: setPort,
+						onPeer: setPeer,
+						disabled: running,
+						manual,
+						onAdd: add,
+						onRemove: remove
+					}}
 				/>
+
+				<div className='mt-5 flex flex-col gap-2'>
+					<h3 className='text-xs font-medium tracking-wide text-slate-500 uppercase dark:text-slate-400'>
+						Names
+					</h3>
+					<PcNames {...{ peers, onRename: rename }} />
+				</div>
 			</Modal>
 
 			<Modal
-				title='Settings'
-				open={showSettings}
-				onClose={() => setShowSettings(false)}
+				{...{
+					title: 'Settings',
+					open: showSettings,
+					onClose: () => setShowSettings(false)
+				}}
 			>
-				<Diagnostics stats={stats} running={running} />
+				<Diagnostics {...{ stats, running }} />
 			</Modal>
 		</div>
 	);

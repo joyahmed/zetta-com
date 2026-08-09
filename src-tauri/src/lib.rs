@@ -167,13 +167,14 @@ fn net_start(
     // A port on the command line wins, so a second instance started for testing
     // cannot be dragged back onto the first one's port by the shared config.
     let port = config::port_override().unwrap_or(port);
-    let manual = config::load(&app).map(|c| c.manual).unwrap_or_default();
+    let saved = config::load(&app).unwrap_or_default();
+    let (manual, labels) = (saved.manual, saved.labels);
     let mut guard = state.0.lock().map_err(|e| e.to_string())?;
     // Drop any existing transport before binding, or starting on the same port
     // fails with "address already in use" against ourselves.
     *guard = None;
     *guard = Some(
-        session::start(port, &peer, &manual, ptt.0.clone()).map_err(|e| format!("{e:#}"))?,
+        session::start(port, &peer, &manual, labels, ptt.0.clone()).map_err(|e| format!("{e:#}"))?,
     );
 
     // Saved only after a successful bind, so a setting that cannot work is
@@ -232,7 +233,7 @@ fn manual_peers(
     if guard.is_some() {
         *guard = None;
         *guard = Some(
-            session::start(cfg.port, &cfg.peer, &cfg.manual, ptt.0.clone())
+            session::start(cfg.port, &cfg.peer, &cfg.manual, cfg.labels.clone(), ptt.0.clone())
                 .map_err(|e| format!("{e:#}"))?,
         );
     }
@@ -272,6 +273,44 @@ fn send_text(state: State<NetState>, text: String) -> Result<(), String> {
         }
         None => Err("Not running — press Start first.".into()),
     }
+}
+
+/// Give a machine your own name for it, or clear it with an empty string.
+///
+/// Restarts the session so it takes effect, same as adding a peer: renaming is
+/// rare, and one code path that rebuilds beats two that have to agree.
+#[tauri::command]
+fn set_label(
+    app: tauri::AppHandle,
+    state: State<NetState>,
+    ptt: State<Ptt>,
+    addr: String,
+    label: String,
+) -> Result<(), String> {
+    let mut cfg = config::load(&app).unwrap_or_default();
+    let label = label.trim().to_string();
+    if label.is_empty() {
+        cfg.labels.remove(&addr);
+    } else {
+        cfg.labels.insert(addr, label);
+    }
+    config::save(&app, &cfg).map_err(|e| format!("{e:#}"))?;
+
+    let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+    if guard.is_some() {
+        *guard = None;
+        *guard = Some(
+            session::start(
+                config::port_override().unwrap_or(cfg.port),
+                &cfg.peer,
+                &cfg.manual,
+                cfg.labels.clone(),
+                ptt.0.clone(),
+            )
+            .map_err(|e| format!("{e:#}"))?,
+        );
+    }
+    Ok(())
 }
 
 /// Aim voice and text at one machine, or at everyone when `addr` is null.
@@ -502,7 +541,7 @@ pub fn run() {
         )
         .invoke_handler(tauri::generate_handler![
             greet, net_start, net_stop, net_stats, net_peers, local_name, config_get,
-            ptt_held, send_text, messages, manual_peers, set_target, shortcuts
+            ptt_held, send_text, messages, manual_peers, set_target, shortcuts, set_label
         ])
         .setup(move |app| {
             let show = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
@@ -643,7 +682,7 @@ pub fn run() {
                     // value while binding the overridden one — a log that
                     // misreports which port is in use is worse than no log.
                     let port = config::port_override().unwrap_or(cfg.port);
-                    match session::start(port, &cfg.peer, &cfg.manual, ptt.clone()) {
+                    match session::start(port, &cfg.peer, &cfg.manual, cfg.labels.clone(), ptt.clone()) {
                     Ok(s) => {
                         eprintln!("[net] auto-started on {port} -> {}", cfg.peer);
                         Some(s)

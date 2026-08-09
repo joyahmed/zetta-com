@@ -128,6 +128,11 @@ type NavProps = {
 	onSettings: () => void;
 };
 
+type PcNamesProps = {
+	peers: Peer[];
+	onRename: (addr: string, label: string) => Promise<void>;
+};
+
 type ModalProps = {
 	title: string;
 	open: boolean;
