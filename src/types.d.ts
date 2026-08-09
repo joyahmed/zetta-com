@@ -19,10 +19,22 @@ type Config = {
 	peer: string;
 	manual: string[];
 	talkShortcut: string;
+	/// The shared room passphrase. Empty means nothing is encrypted.
+	passphrase: string;
 	/// Chosen microphone and speakers by name. Null means the system default.
 	inputDevice: string | null;
 	outputDevice: string | null;
 	presets: Preset[];
+};
+
+type RoomProps = {
+	passphrase: string;
+	/// Short code derived from the key, for comparing across machines. Null
+	/// when there is no passphrase.
+	code: string | null;
+	onGenerate: () => Promise<void>;
+	/// An empty passphrase leaves the room and goes back to the clear.
+	onJoin: (passphrase: string) => Promise<void>;
 };
 
 type DevicesProps = {

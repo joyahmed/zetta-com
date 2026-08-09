@@ -9,6 +9,7 @@ import { Modal } from './components/Modal';
 import { Nav } from './components/Nav';
 import { Pcs } from './components/Pcs';
 import { Presets } from './components/Presets';
+import { Room } from './components/Room';
 import { Roster } from './components/Roster';
 import { Shortcuts } from './components/Shortcuts';
 import { TalkBar } from './components/TalkBar';
@@ -19,6 +20,7 @@ import { useMessages } from './hooks/useMessages';
 import { usePtt } from './hooks/usePtt';
 import { useShortcuts } from './hooks/useShortcuts';
 import { useDevices } from './hooks/useDevices';
+import { useRoom } from './hooks/useRoom';
 import { useTarget } from './hooks/useTarget';
 import { useTransport } from './hooks/useTransport';
 
@@ -41,6 +43,7 @@ const App = () => {
 		useManualPeers(setError);
 	const { target, setTarget } = useTarget(setError);
 	const devices = useDevices(setError);
+	const room = useRoom(setError);
 	const {
 		shortcuts,
 		setShortcut,
@@ -175,6 +178,20 @@ const App = () => {
 			>
 				<div className='flex flex-col gap-5'>
 					<Connection {...{ port, onPort: setPort, disabled: running }} />
+
+					<div className='flex flex-col gap-2'>
+						<h3 className='text-xs font-medium tracking-wide text-muted uppercase'>
+							Room
+						</h3>
+						<Room
+							{...{
+								passphrase: room.passphrase,
+								code: room.code,
+								onGenerate: room.generate,
+								onJoin: room.join
+							}}
+						/>
+					</div>
 
 					<div className='flex flex-col gap-2'>
 						<h3 className='text-xs font-medium tracking-wide text-muted uppercase'>

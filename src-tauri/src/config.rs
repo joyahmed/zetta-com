@@ -37,6 +37,7 @@ impl Default for Config {
             talk_shortcut: default_talk_shortcut(),
             shortcuts: HashMap::new(),
             order: Vec::new(),
+            passphrase: String::new(),
             input_device: None,
             output_device: None,
             presets: default_presets(),
@@ -90,6 +91,16 @@ pub struct Config {
     /// renumbers everybody after it.
     #[serde(default)]
     pub order: Vec<String>,
+
+    /// The room passphrase. Empty means no room: everything travels in the
+    /// clear, which is what this was before.
+    ///
+    /// Shared by every machine that should hear each other, the way a WiFi
+    /// password is. Stored in plain text here because the app has to be able to
+    /// derive the key without anyone present to type it — a PC whose whole job
+    /// is to listen comes up receiving with nobody sitting at it.
+    #[serde(default)]
+    pub passphrase: String,
 
     /// Microphone and speakers by name, or the system default when empty.
     ///

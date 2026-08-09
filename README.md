@@ -243,16 +243,32 @@ step in it.
 
 ## Security
 
-> [!CAUTION]
-> **There is none.** Anyone on the network can send audio and text to anyone
-> running this, and anyone running it hears whatever is sent to its port. There
-> is no authentication, no encryption, and no access control.
->
-> Anyone who can capture packets on the network can reconstruct a conversation.
+**Set a passphrase.** One machine generates it, everyone else is given it, and
+from then on those machines are a room. Every packet is sealed with
+ChaCha20-Poly1305, which does two jobs at once:
 
-That is a reasonable trade on a trusted office LAN, which is what it was built
-for. It is not one anywhere else. **Do not run it on a network you do not
-control.**
+- **Admission** — a packet that does not authenticate is dropped, so nobody
+  outside the room can put audio into your speakers or appear in your roster.
+- **Privacy** — the payload is unreadable. Names and presence stop leaking too,
+  because heartbeats are sealed the same way.
+
+Every machine shows a short **room code** derived from the key. Compare it
+across two screens: same code, same room. Without it, a passphrase typed wrongly
+on one machine is indistinguishable from a network fault — everything appears to
+run, the roster is empty, and nothing reports an error, because a packet that
+fails to authenticate is dropped without a reply.
+
+> [!CAUTION]
+> **With no passphrase set, there is no security at all.** Anyone on the network
+> can send audio and text to anyone running this, and can capture the packets
+> and reconstruct a conversation. They do not need this app to do it, and
+> nothing in your roster will ever show they were there.
+>
+> That is a reasonable trade on a LAN you control. It is not one anywhere else.
+
+What a passphrase does **not** do: anyone who has it hears everything — it is a
+channel key, not a per-person one — and anyone with access to a machine can read
+it out of the config file.
 
 ---
 

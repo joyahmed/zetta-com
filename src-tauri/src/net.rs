@@ -21,9 +21,25 @@ use std::time::Duration;
 use anyhow::{anyhow, Context, Result};
 use serde::Serialize;
 
+use crate::room;
+
+/// header ‖ payload, or header ‖ nonce ‖ ciphertext ‖ tag once a room key is
+/// set. The header travels in the clear either way — the receiver reads the
+/// sequence number before it decides what to do with a packet — but it is
+/// authenticated, so it cannot be forged or edited in flight.
+fn frame(room: Option<&room::Room>, header: &[u8], payload: &[u8]) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(header.len() + payload.len() + room::OVERHEAD);
+    out.extend_from_slice(header);
+    match room {
+        None => out.extend_from_slice(payload),
+        Some(r) => out.extend_from_slice(&r.seal(header, payload)?),
+    }
+    Some(out)
+}
+
 /// Bumped when the wire format changes. One byte that stops a future build's
 /// packets from being decoded as noise by this one.
-pub const VER: u8 = 1;
+pub const VER: u8 = 2;
 pub const KIND_AUDIO: u8 = 0;
 pub const KIND_TEXT: u8 = 1;
 pub const KIND_HEARTBEAT: u8 = 2;
@@ -189,6 +205,9 @@ pub struct Handle {
     /// Counts calls to `send_audio` so the recipient report can be throttled to
     /// roughly one line a second at fifty frames a second.
     sent_report: AtomicU64,
+    /// The room key, when a passphrase is set. `None` means everything travels
+    /// in the clear, which is what this was before there was a passphrase.
+    room: Option<Arc<room::Room>>,
     /// Joined on drop. Setting the stop flag and returning was not enough: the
     /// receiver sits in `recv_from` for up to its 200 ms read timeout, and it
     /// holds a clone of the socket the whole time — so the port stayed bound
@@ -308,8 +327,10 @@ impl Handle {
             ts: self.ts.fetch_add(samples as u64, Ordering::Relaxed) as u32,
         };
         h.write(&mut buf);
-        buf[HEADER_LEN..HEADER_LEN + data.len()].copy_from_slice(data);
-        let packet = &buf[..HEADER_LEN + data.len()];
+        let Some(packet) = frame(self.room.as_deref(), &buf[..HEADER_LEN], data) else {
+            return;
+        };
+        let packet = &packet[..];
 
         for addr in targets {
             match self.socket.send_to(packet, addr) {
@@ -368,8 +389,10 @@ impl Handle {
             ts: 0,
         }
         .write(&mut buf);
-        buf[HEADER_LEN..HEADER_LEN + bytes.len()].copy_from_slice(bytes);
-        let packet = &buf[..HEADER_LEN + bytes.len()];
+        let Some(packet) = frame(self.room.as_deref(), &buf[..HEADER_LEN], bytes) else {
+            return;
+        };
+        let packet = &packet[..];
 
         // Logged because "nothing happened" needs to distinguish between no
         // recipients and a send that failed. Sending to nobody is the far more
@@ -568,6 +591,7 @@ impl Jitter {
 pub fn start(
     port: u16,
     peer: &str,
+    passphrase: &str,
     local_name: &str,
     audio_in: SyncSender<(SocketAddr, Option<Vec<u8>>)>,
 ) -> Result<Handle> {
@@ -599,6 +623,18 @@ pub fn start(
 
     let stop = Arc::new(AtomicBool::new(false));
     let counters = Arc::new(Counters::default());
+
+    // One key, shared by the sender, the heartbeat and the receiver. Built once
+    // here rather than per packet: deriving it is cheap but the nonce counter
+    // has to be the same one everywhere, or two threads would reuse a nonce —
+    // the single fatal mistake with this cipher.
+    let room = room::Room::new(passphrase).map(Arc::new);
+    match &room {
+        Some(_) => eprintln!("[net] room key set, packets are encrypted"),
+        None => eprintln!("[net] no passphrase, packets are in the clear"),
+    }
+    let hb_room = room.clone();
+    let rx_room = room.clone();
 
     // There is no sender thread any more. Sends are driven by the encoder
     // through Handle::send_audio, so the microphone sets the packet rate
@@ -646,8 +682,12 @@ pub fn start(
                 ts: 0,
             }
             .write(&mut buf);
-            buf[HEADER_LEN..HEADER_LEN + n].copy_from_slice(&name[..n]);
-            let buf = &buf[..HEADER_LEN + n];
+            // Sealed like everything else. A heartbeat carries this machine's
+            // name, so leaving it in the clear would hand a listener the roster
+            // and let anyone forge presence in it.
+            let Some(buf) = frame(hb_room.as_deref(), &buf[..HEADER_LEN], &name[..n]) else {
+                return;
+            };
 
             while !hb_stop.load(Ordering::Relaxed) {
                 // To everyone known, not only everyone live. Two instances
@@ -661,7 +701,7 @@ pub fn start(
                     t.known.clone()
                 };
                 for addr in known {
-                    if let Err(e) = hb_sock.send_to(buf, addr) {
+                    if let Err(e) = hb_sock.send_to(&buf, addr) {
                         eprintln!("[net] heartbeat to {addr} failed: {e}");
                     }
                 }
@@ -697,6 +737,26 @@ pub fn start(
                 rx_counters.bad.fetch_add(1, Ordering::Relaxed);
                 continue;
             };
+
+            // Opened before anything is believed. A packet that does not
+            // authenticate is from outside the room — a different passphrase, a
+            // stranger, or something altered in flight — and it is dropped
+            // without a reply. It counts as rejected rather than being ignored
+            // silently, because a machine on the wrong passphrase otherwise
+            // looks exactly like a network fault: everything runs, nobody is
+            // there. The rejected counter climbing is the difference.
+            let body: Vec<u8> = match rx_room.as_deref() {
+                None => buf[HEADER_LEN..len].to_vec(),
+                Some(r) => match r.open(&buf[..HEADER_LEN], &buf[HEADER_LEN..len]) {
+                    Some(v) => v,
+                    None => {
+                        rx_counters.bad.fetch_add(1, Ordering::Relaxed);
+                        continue;
+                    }
+                },
+            };
+            let len = HEADER_LEN + body.len();
+            buf[HEADER_LEN..len].copy_from_slice(&body);
 
             // Anything well-formed counts as a sign of life, not just
             // heartbeats — somebody mid-sentence is obviously present, and
@@ -804,6 +864,7 @@ pub fn start(
         messages,
         next_message_id: message_id,
         sent_report: AtomicU64::new(0),
+        room,
         threads: vec![hb_thread, rx_thread],
     })
 }

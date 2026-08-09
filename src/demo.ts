@@ -116,6 +116,11 @@ export const DEMO_MESSAGES: Message[] = [
 	{ id: 13, from: 'Salman', text: 'Smoke passed, deploying', mine: false, at: at(9, 41) }
 ];
 
+export const DEMO_ROOM = {
+	passphrase: 'cedar-harbor-quartz-thistle-ivory-9f4c2ab7e1d05836',
+	code: '7B2E'
+};
+
 export const DEMO_DEVICES = {
 	inputs: [
 		'Headset Microphone (Jabra Evolve 40)',

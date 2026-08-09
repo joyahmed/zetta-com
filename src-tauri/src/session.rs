@@ -232,6 +232,7 @@ pub fn start(
     manual_entries: &[String],
     labels: HashMap<String, String>,
     order: Vec<String>,
+    passphrase: String,
     audio_prefs: audio::Prefs,
     transmit: Arc<AtomicBool>,
 ) -> Result<Session> {
@@ -251,6 +252,7 @@ pub fn start(
     let net = Arc::new(net::start(
         port,
         peer,
+        &passphrase,
         &discovery::local_name(),
         pipeline.frames_in.clone(),
     )?);

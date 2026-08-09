@@ -12,6 +12,7 @@ mod config;
 mod discovery;
 mod keys;
 mod net;
+mod room;
 mod session;
 mod state;
 
@@ -98,6 +99,9 @@ pub fn run() {
             commands::set_audio_devices,
             commands::set_shortcut,
             commands::set_order,
+            commands::room_new,
+            commands::room_code,
+            commands::set_passphrase,
             keys::shortcuts,
         ])
         .setup(move |app| {
@@ -154,6 +158,7 @@ pub fn run() {
                 &cfg.manual,
                 cfg.labels.clone(),
                 cfg.order.clone(),
+                cfg.passphrase.clone(),
                 commands::audio_prefs(&cfg),
                 ptt.clone(),
             ) {

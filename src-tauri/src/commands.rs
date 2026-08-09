@@ -9,7 +9,7 @@ use std::sync::atomic::Ordering;
 use tauri::State;
 
 use crate::state::{NetState, Ptt};
-use crate::{audio, config, discovery, keys, net, session};
+use crate::{audio, config, discovery, keys, net, room, session};
 
 #[tauri::command]
 pub fn greet(name: &str) -> String {
@@ -31,13 +31,14 @@ pub fn net_start(
     let saved = config::load(&app).unwrap_or_default();
     let prefs = audio_prefs(&saved);
     let saved_order = saved.order.clone();
+    let saved_pass = saved.passphrase.clone();
     let (manual, labels) = (saved.manual, saved.labels);
     let mut guard = state.0.lock().map_err(|e| e.to_string())?;
     // Drop any existing transport before binding, or starting on the same port
     // fails with "address already in use" against ourselves.
     *guard = None;
     *guard = Some(
-        session::start(port, &peer, &manual, labels, saved_order, prefs, ptt.0.clone()).map_err(|e| format!("{e:#}"))?,
+        session::start(port, &peer, &manual, labels, saved_order, saved_pass, prefs, ptt.0.clone()).map_err(|e| format!("{e:#}"))?,
     );
 
     // Saved only after a successful bind, so a setting that cannot work is
@@ -118,6 +119,56 @@ pub fn set_shortcut(
     Ok(l.clone())
 }
 
+/// A fresh passphrase for a new room. Generated here, not typed: a passphrase
+/// somebody invents is a passphrase somebody else guesses.
+#[tauri::command]
+pub fn room_new() -> String {
+    room::generate()
+}
+
+/// The short code for a passphrase, so two machines can be compared without
+/// either of them showing the passphrase itself.
+#[tauri::command]
+pub fn room_code(passphrase: String) -> Option<String> {
+    room::code(&passphrase)
+}
+
+/// Join a room, or leave it with an empty passphrase.
+///
+/// Rebinds: the key is built when the socket is, and every packet in flight is
+/// sealed with it. Returns the new room code so the window can show what it
+/// actually joined rather than what was typed.
+#[tauri::command]
+pub fn set_passphrase(
+    app: tauri::AppHandle,
+    state: State<NetState>,
+    ptt: State<Ptt>,
+    passphrase: String,
+) -> Result<Option<String>, String> {
+    let mut cfg = config::load(&app).unwrap_or_default();
+    cfg.passphrase = passphrase.trim().to_string();
+    config::save(&app, &cfg).map_err(|e| format!("{e:#}"))?;
+
+    let mut guard = state.0.lock().map_err(|e| e.to_string())?;
+    if guard.is_some() {
+        *guard = None;
+        *guard = Some(
+            session::start(
+                config::port_override().unwrap_or(cfg.port),
+                &cfg.peer,
+                &cfg.manual,
+                cfg.labels.clone(),
+                cfg.order.clone(),
+                cfg.passphrase.clone(),
+                audio_prefs(&cfg),
+                ptt.0.clone(),
+            )
+            .map_err(|e| format!("{e:#}"))?,
+        );
+    }
+    Ok(room::code(&cfg.passphrase))
+}
+
 /// Put the roster in the order you want, by address.
 ///
 /// Applied in place, like a rename: this decides which PC is `Ctrl+1`, but it
@@ -176,6 +227,7 @@ pub fn set_audio_devices(
                 &cfg.manual,
                 cfg.labels.clone(),
                 cfg.order.clone(),
+                cfg.passphrase.clone(),
                 audio_prefs(&cfg),
                 ptt.0.clone(),
             )
@@ -223,7 +275,7 @@ pub fn manual_peers(
     if guard.is_some() {
         *guard = None;
         *guard = Some(
-            session::start(cfg.port, &cfg.peer, &cfg.manual, cfg.labels.clone(), cfg.order.clone(), audio_prefs(&cfg), ptt.0.clone())
+            session::start(cfg.port, &cfg.peer, &cfg.manual, cfg.labels.clone(), cfg.order.clone(), cfg.passphrase.clone(), audio_prefs(&cfg), ptt.0.clone())
                 .map_err(|e| format!("{e:#}"))?,
         );
     }
