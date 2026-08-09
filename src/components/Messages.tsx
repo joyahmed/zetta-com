@@ -1,7 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
 
+// Always 24-hour, whatever the machine is set to. A locale that says "11:54 PM"
+// is three characters wider than the column, so the stamp wrapped onto a second
+// line and every message in the log became two rows tall. A fixed-width stamp is
+// also what makes the column line up at all, which is the only reason to put the
+// time in a column rather than inline.
+//
+// hourCycle rather than hour12: false, because the two are not the same request
+// — hour12 selects h24, which renders midnight as "24:00".
 const time = (ms: number) =>
-	new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+	new Date(ms).toLocaleTimeString([], {
+		hour: '2-digit',
+		minute: '2-digit',
+		hourCycle: 'h23'
+	});
 
 /// What has been said, and the box you say it in.
 ///
@@ -59,7 +71,11 @@ export const Messages = ({
 									same ? '' : 'mt-1.5 first:mt-0'
 								}`}
 							>
-								<span className='w-14 shrink-0 font-mono text-xs text-faint'>
+								{/* nowrap as well as a width: the width is what
+								    aligns the column, and nowrap is what stops any
+								    future stamp from silently buying a second row
+								    the way the 12-hour one did. */}
+								<span className='w-10 shrink-0 font-mono text-xs whitespace-nowrap text-faint tabular-nums'>
 									{time(m.at)}
 								</span>
 								<span

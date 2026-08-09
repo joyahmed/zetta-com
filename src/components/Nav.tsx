@@ -15,7 +15,11 @@ const IconButton = ({
 		onClick={onClick}
 		title={label}
 		aria-label={label}
-		className='rounded-lg p-2 text-muted transition hover:bg-sunken hover:text-ink'
+		// p-1.5, not p-2. Four icons plus a button plus the window controls share
+		// this bar with the machine name, and the name is the only part of it
+		// that has a length nobody chose — 8px per icon is the difference between
+		// "Admins-Mac-Studio" reading in full and reading as "Admins-Mac-Stu…".
+		className='rounded-lg p-1.5 text-muted transition hover:bg-sunken hover:text-ink'
 	>
 		{children}
 	</button>
@@ -92,7 +96,7 @@ export const Nav = ({
 
 		<div
 			data-tauri-drag-region
-			className='mx-auto flex w-full max-w-md items-center gap-3 px-4 pt-1 pb-3'
+			className='mx-auto flex w-full max-w-md items-center gap-2 px-4 pt-1 pb-3'
 		>
 			<img
 				data-tauri-drag-region
@@ -114,12 +118,18 @@ export const Nav = ({
 				>
 					Zetta Com
 				</h1>
+				{/* title as well as truncate. A hostname is not something the
+				    user picked to fit here, and a name cut to "Admins-Mac-Stu…"
+				    with no way to read the rest is the bar lying about which
+				    machine you are sitting at. The dot is outside the truncating
+				    span so it survives however long the name is. */}
 				<p
 					data-tauri-drag-region
-					className='flex items-center gap-1.5 truncate text-xs text-muted'
+					title={me}
+					className='flex items-center gap-1.5 text-xs text-muted'
 				>
 					<Dot {...{ on: running }} />
-					{me ? me : ' '}
+					<span className='truncate'>{me ? me : ' '}</span>
 				</p>
 			</div>
 
@@ -141,10 +151,17 @@ export const Nav = ({
 					<path d='M3 12h3.5l2-6 4 13 2.5-7H21' />
 				</svg>
 			</IconButton>
+			{/* 16px, not 18: a gear is eight teeth and a hub where the others are
+			    two or three strokes, so at the same nominal size it carries far
+			    more ink and sits heavier than everything beside it.
+			    The path is also redrawn. The old one was this gear with its arc
+			    radii flattened to 1.7 and several sweep flags wrong, so the teeth
+			    curled the wrong way and it rendered as a blot — that, not the
+			    size, is what made it look odd. */}
 			<IconButton {...{ label: 'Settings', onClick: onSettings }}>
-				<svg width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round'>
+				<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round' strokeLinejoin='round'>
 					<circle cx='12' cy='12' r='3' />
-					<path d='M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 7 19.4a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0-1.2-2.9H1a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 2.6 7a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H7a1.7 1.7 0 0 0 1-1.5V1a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V7a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z' />
+					<path d='M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z' />
 				</svg>
 			</IconButton>
 
