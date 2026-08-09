@@ -29,6 +29,9 @@ export const Roster = ({ peers, running, selected, onSelect }: RosterProps) => {
 				</Empty>
 			)}
 
+			{/* Everyone live hears you; there is nobody to pick. The row still
+			    highlights the manual address when one is set, so it is visible
+			    where a hand-typed peer ended up. */}
 			{peers.map(p => (
 				<PeerRow
 					key={p.id}

@@ -104,6 +104,12 @@ pub struct Stats {
     pub last_seq: u16,
 }
 
+#[derive(Default)]
+struct Targets {
+    known: Vec<SocketAddr>,
+    live: Vec<SocketAddr>,
+}
+
 /// Dropping this stops both threads, same contract as `audio::Handle`.
 pub struct Handle {
     stop: Arc<AtomicBool>,
@@ -111,11 +117,18 @@ pub struct Handle {
     port: u16,
     peer: String,
     socket: UdpSocket,
-    dest: SocketAddr,
     /// Sequence and timestamp live here rather than in the sender thread
     /// because sends are now driven by the encoder, not by a timer.
     seq: AtomicU64,
     ts: AtomicU64,
+    /// Who to send to. `known` is everyone discovered plus the manual address;
+    /// `live` is the subset heard from recently.
+    ///
+    /// Heartbeats go to `known` and audio to `live`, and the difference is what
+    /// stops a deadlock: if both went to `live`, two instances that had never
+    /// heard each other would each wait for the other to speak first and
+    /// neither ever would.
+    targets: Arc<Mutex<Targets>>,
     /// When each address was last heard from — the evidence behind presence.
     ///
     /// This is what makes "live" an observation rather than an assumption.
@@ -132,14 +145,42 @@ impl Drop for Handle {
 }
 
 impl Handle {
-    /// Send one encoded audio frame. `samples` is the sender's frame size, so
-    /// the timestamp advances by what this machine actually captured rather
-    /// than by a constant the receiver would have to guess at.
+    /// Replace the send list. Called from the session as the roster changes.
+    pub fn set_targets(&self, known: Vec<SocketAddr>, live: Vec<SocketAddr>) {
+        let mut t = match self.targets.lock() {
+            Ok(t) => t,
+            Err(e) => e.into_inner(),
+        };
+        *t = Targets { known, live };
+    }
+
+    /// Send one encoded audio frame to everyone live. `samples` is the sender's
+    /// frame size, so the timestamp advances by what this machine actually
+    /// captured rather than by a constant the receiver would have to guess at.
+    ///
+    /// One encode, N sends. Broadcast would be one send, and is the trap: some
+    /// WiFi access points rate-limit or drop broadcast frames, so one person
+    /// silently hears nothing while everyone else is fine. Fan-out costs a few
+    /// hundred bytes per frame per peer on a LAN, and it fails visibly.
     pub fn send_audio(&self, data: &[u8], samples: u32) {
-        let mut buf = [0u8; HEADER_LEN + MAX_PAYLOAD];
         if data.len() > MAX_PAYLOAD {
             return;
         }
+        let targets = {
+            let t = match self.targets.lock() {
+                Ok(t) => t,
+                Err(e) => e.into_inner(),
+            };
+            t.live.clone()
+        };
+        if targets.is_empty() {
+            return;
+        }
+
+        // The sequence advances once per frame, not once per recipient:
+        // everyone is receiving the same stream, and a per-recipient sequence
+        // would make every listener see gaps the size of the roster.
+        let mut buf = [0u8; HEADER_LEN + MAX_PAYLOAD];
         let h = Header {
             ver: VER,
             kind: KIND_AUDIO,
@@ -148,12 +189,15 @@ impl Handle {
         };
         h.write(&mut buf);
         buf[HEADER_LEN..HEADER_LEN + data.len()].copy_from_slice(data);
+        let packet = &buf[..HEADER_LEN + data.len()];
 
-        match self.socket.send_to(&buf[..HEADER_LEN + data.len()], self.dest) {
-            Ok(_) => {
-                self.counters.tx.fetch_add(1, Ordering::Relaxed);
+        for addr in targets {
+            match self.socket.send_to(packet, addr) {
+                Ok(_) => {
+                    self.counters.tx.fetch_add(1, Ordering::Relaxed);
+                }
+                Err(e) => eprintln!("[net] tx to {addr} failed: {e}"),
             }
-            Err(e) => eprintln!("[net] tx failed: {e}"),
         }
     }
 
@@ -291,8 +335,19 @@ impl Jitter {
 
 /// `audio_in` carries `None` for a frame the sequence numbers prove is missing,
 /// so the decoder can conceal the gap rather than skip it.
-pub fn start(port: u16, peer: &str, audio_in: SyncSender<Option<Vec<u8>>>) -> Result<Handle> {
-    let dest = resolve_v4(peer)?;
+pub fn start(
+    port: u16,
+    peer: &str,
+    audio_in: SyncSender<(SocketAddr, Option<Vec<u8>>)>,
+) -> Result<Handle> {
+    // An address is optional now. Discovery supplies peers on a normal network;
+    // this is the escape hatch for one that filters mDNS, or for a PC on
+    // another subnet that will never be discovered at all.
+    let dest = if peer.trim().is_empty() {
+        None
+    } else {
+        Some(resolve_v4(peer)?)
+    };
 
     // 0.0.0.0 written out on purpose. An empty host binds IPv6-only on Windows
     // and then silently discards every IPv4 datagram — the bug that made every
@@ -306,7 +361,10 @@ pub fn start(port: u16, peer: &str, audio_in: SyncSender<Option<Vec<u8>>>) -> Re
         .set_read_timeout(Some(Duration::from_millis(200)))
         .context("setting read timeout")?;
 
-    eprintln!("[net] bound 0.0.0.0:{port}, peer {peer} -> {dest}");
+    match dest {
+        Some(d) => eprintln!("[net] bound 0.0.0.0:{port}, manual peer {peer} -> {d}"),
+        None => eprintln!("[net] bound 0.0.0.0:{port}, peers from discovery"),
+    }
 
     let stop = Arc::new(AtomicBool::new(false));
     let counters = Arc::new(Counters::default());
@@ -322,8 +380,16 @@ pub fn start(port: u16, peer: &str, audio_in: SyncSender<Option<Vec<u8>>>) -> Re
     // silent peer is indistinguishable from a switched-off one, which is the
     // gap v1 never closed: it could report that somebody was there, never that
     // they were not.
+    // Seeded with the manual address when there is one, so a network that
+    // filters mDNS still has somebody to talk to from the first heartbeat.
+    let targets = Arc::new(Mutex::new(Targets {
+        known: dest.into_iter().collect(),
+        live: dest.into_iter().collect(),
+    }));
+
     let hb_sock = socket.try_clone().context("cloning socket for heartbeat")?;
     let hb_stop = stop.clone();
+    let hb_targets = targets.clone();
     thread::Builder::new()
         .name("net-heartbeat".into())
         .spawn(move || {
@@ -340,8 +406,20 @@ pub fn start(port: u16, peer: &str, audio_in: SyncSender<Option<Vec<u8>>>) -> Re
             .write(&mut buf);
 
             while !hb_stop.load(Ordering::Relaxed) {
-                if let Err(e) = hb_sock.send_to(&buf, dest) {
-                    eprintln!("[net] heartbeat failed: {e}");
+                // To everyone known, not only everyone live. Two instances
+                // that have never heard each other would otherwise each wait
+                // for the other to speak first.
+                let known = {
+                    let t = match hb_targets.lock() {
+                        Ok(t) => t,
+                        Err(e) => e.into_inner(),
+                    };
+                    t.known.clone()
+                };
+                for addr in known {
+                    if let Err(e) = hb_sock.send_to(&buf, addr) {
+                        eprintln!("[net] heartbeat to {addr} failed: {e}");
+                    }
                 }
                 thread::sleep(HEARTBEAT_EVERY);
             }
@@ -352,8 +430,10 @@ pub fn start(port: u16, peer: &str, audio_in: SyncSender<Option<Vec<u8>>>) -> Re
     let rx_heard = heard.clone();
     thread::Builder::new().name("net-rx".into()).spawn(move || {
         let mut buf = [0u8; 2048];
-        let mut expect: Option<u16> = None;
-        let mut jitter = Jitter::new();
+        // One reorder window per source. Sequence numbers are per-sender, so a
+        // shared window would treat two people talking as one stream full of
+        // gaps and throw most of both away.
+        let mut windows: HashMap<SocketAddr, (Jitter, Option<u16>)> = HashMap::new();
         let mut ready: Vec<Option<Vec<u8>>> = Vec::with_capacity(SLOTS);
 
         while !rx_stop.load(Ordering::Relaxed) {
@@ -381,11 +461,15 @@ pub fn start(port: u16, peer: &str, audio_in: SyncSender<Option<Vec<u8>>>) -> Re
 
             rx_counters.rx.fetch_add(1, Ordering::Relaxed);
 
-            // Loss is counted on audio alone. Heartbeats carry their own fixed
-            // sequence, and mixing the two streams into one counter would
-            // report gaps that never existed.
-            if h.kind == KIND_AUDIO {
-                if let Some(want) = expect {
+            if h.kind == KIND_AUDIO && len > HEADER_LEN {
+                let (jitter, expected) = windows
+                    .entry(from)
+                    .or_insert_with(|| (Jitter::new(), None));
+
+                // Loss is counted on audio alone, and per sender. Heartbeats
+                // carry their own fixed sequence, and folding several senders
+                // into one counter would report gaps that never existed.
+                if let Some(want) = *expected {
                     // seq is u16 and wraps every ~22 minutes of talking at 50
                     // packets a second, so this is wrapping_sub and not `>`. A
                     // plain comparison stalls permanently at the wrap.
@@ -394,18 +478,16 @@ pub fn start(port: u16, peer: &str, audio_in: SyncSender<Option<Vec<u8>>>) -> Re
                         rx_counters.lost.fetch_add(ahead as u64, Ordering::Relaxed);
                     }
                 }
-                expect = Some(h.seq.wrapping_add(1));
+                *expected = Some(h.seq.wrapping_add(1));
                 rx_counters.last_seq.store(h.seq as u64, Ordering::Relaxed);
-            }
 
-            if h.kind == KIND_AUDIO && len > HEADER_LEN {
                 ready.clear();
                 jitter.push(h.seq, buf[HEADER_LEN..len].to_vec(), &mut ready);
                 for frame in ready.drain(..) {
                     // try_send: if the decoder is behind, dropping the newest
                     // frame is better than growing a queue of speech nobody
                     // will want by the time it plays.
-                    let _ = audio_in.try_send(frame);
+                    let _ = audio_in.try_send((from, frame));
                 }
             }
         }
@@ -417,9 +499,9 @@ pub fn start(port: u16, peer: &str, audio_in: SyncSender<Option<Vec<u8>>>) -> Re
         port,
         peer: peer.to_string(),
         socket: tx_sock,
-        dest,
         seq: AtomicU64::new(0),
         ts: AtomicU64::new(0),
+        targets,
         heard,
     })
 }

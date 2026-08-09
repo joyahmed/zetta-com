@@ -12,6 +12,8 @@
 //! allocation, no locks, no logging inside them — `println!` takes the stdout
 //! lock and is audible as a crackle.
 
+use std::collections::HashMap;
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
 use std::sync::Arc;
@@ -99,10 +101,15 @@ pub struct Frame {
 /// module knows the other exists.
 pub struct Pipeline {
     pub frames_out: Receiver<Frame>,
+    /// Keyed by who sent it. Each remote talker needs its own decoder, because
+    /// Opus decoder state is a running conversation with one encoder — feeding
+    /// two people's packets through a single decoder produces garbage, not a
+    /// mix.
+    ///
     /// `None` means a frame the transport knows is missing. It is not the same
     /// as no frame at all: the decoder conceals a gap it is told about, and a
     /// concealed 20 ms is far less audible than a skipped one.
-    pub frames_in: SyncSender<Option<Vec<u8>>>,
+    pub frames_in: SyncSender<(SocketAddr, Option<Vec<u8>>)>,
     pub handle: Handle,
 }
 
@@ -114,7 +121,7 @@ pub fn start() -> Result<Pipeline> {
     // correct response and an unbounded queue is not: audio that arrives late
     // enough is worth less than the memory holding it.
     let (out_tx, out_rx) = mpsc::sync_channel::<Frame>(8);
-    let (in_tx, in_rx) = mpsc::sync_channel::<Option<Vec<u8>>>(16);
+    let (in_tx, in_rx) = mpsc::sync_channel::<(SocketAddr, Option<Vec<u8>>)>(32);
 
     let thread_stop = stop.clone();
     thread::Builder::new()
@@ -147,7 +154,7 @@ pub fn start() -> Result<Pipeline> {
 fn build(
     stop: &Arc<AtomicBool>,
     out_tx: SyncSender<Frame>,
-    in_rx: Receiver<Option<Vec<u8>>>,
+    in_rx: Receiver<(SocketAddr, Option<Vec<u8>>)>,
 ) -> Result<Streams> {
     let host = cpal::default_host();
 
@@ -348,7 +355,7 @@ fn build_playback(
     cfg: &SupportedStreamConfig,
     stop: &Arc<AtomicBool>,
     stats: &Arc<Stats>,
-    in_rx: Receiver<Option<Vec<u8>>>,
+    in_rx: Receiver<(SocketAddr, Option<Vec<u8>>)>,
 ) -> Result<cpal::Stream> {
     let hz = cfg.sample_rate();
     let frame = (hz / 50) as usize;
@@ -448,20 +455,35 @@ fn build_playback(
     };
 
     let dec_stop = stop.clone();
-    thread::Builder::new().name("decoder".into()).spawn(move || {
-        let mut dec = match Decoder::new(rate, Channels::Mono) {
-            Ok(d) => d,
-            Err(e) => return eprintln!("[audio] decoder: {e}"),
-        };
+    thread::Builder::new().name("mixer".into()).spawn(move || {
+        // One decoder and one pending queue per talker. The decoder is the
+        // reason: Opus decoder state is a running conversation with a single
+        // encoder, so pushing two people's packets through one produces
+        // garbage rather than a mix.
+        let mut sources: HashMap<SocketAddr, (Decoder, Vec<i16>)> = HashMap::new();
         let mut out = [0i16; MAX_FRAME];
+        let mut mixed = [0i32; MAX_FRAME];
 
         while !dec_stop.load(Ordering::Relaxed) {
             // Timed out rather than blocking, so the thread notices the stop
             // flag instead of parking forever on a silent peer.
-            let packet = match in_rx.recv_timeout(Duration::from_millis(200)) {
+            let (from, packet) = match in_rx.recv_timeout(Duration::from_millis(200)) {
                 Ok(p) => p,
                 Err(RecvTimeoutError::Timeout) => continue,
                 Err(RecvTimeoutError::Disconnected) => break,
+            };
+
+            let entry = match sources.entry(from) {
+                std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+                std::collections::hash_map::Entry::Vacant(e) => {
+                    match Decoder::new(rate, Channels::Mono) {
+                        Ok(d) => e.insert((d, Vec::with_capacity(MAX_FRAME * 4))),
+                        Err(err) => {
+                            eprintln!("[audio] decoder for {from}: {err}");
+                            continue;
+                        }
+                    }
+                }
             };
 
             // A `None` is a frame the transport knows never arrived, and
@@ -473,17 +495,40 @@ fn build_playback(
             // what converts the rate: libopus resamples internally, so nothing
             // here has to, and the two machines never have to agree on a rate.
             let decoded = match &packet {
-                Some(p) => dec.decode(Some(&p[..]), &mut out[..frame], false),
-                None => dec.decode(None::<&[u8]>, &mut out[..frame], false),
+                Some(p) => entry.0.decode(Some(&p[..]), &mut out[..frame], false),
+                None => entry.0.decode(None::<&[u8]>, &mut out[..frame], false),
             };
-            let got = match decoded {
-                Ok(n) => n,
-                Err(e) => {
-                    eprintln!("[audio] decode: {e}");
-                    continue;
+            match decoded {
+                Ok(got) => entry.1.extend_from_slice(&out[..got]),
+                Err(e) => eprintln!("[audio] decode from {from}: {e}"),
+            }
+
+            // Mix whatever every source has ready. Half-duplex means one person
+            // should be talking at a time, but nothing enforces that until
+            // push-to-talk exists, and two people overlapping must sound like
+            // two people rather than like corruption.
+            loop {
+                let ready = sources.values().filter(|(_, q)| q.len() >= frame).count();
+                if ready == 0 {
+                    break;
                 }
-            };
-            prod.push_slice(&out[..got]);
+                mixed[..frame].fill(0);
+                for (_, q) in sources.values_mut() {
+                    if q.len() < frame {
+                        continue;
+                    }
+                    for (m, s) in mixed[..frame].iter_mut().zip(q.drain(..frame)) {
+                        *m += s as i32;
+                    }
+                }
+                // Sum in i32 and clamp once. Summing in i16 would wrap, and a
+                // wrap is heard as a crack far louder than the clipping it
+                // replaces.
+                for (o, m) in out[..frame].iter_mut().zip(&mixed[..frame]) {
+                    *o = (*m).clamp(i16::MIN as i32, i16::MAX as i32) as i16;
+                }
+                prod.push_slice(&out[..frame]);
+            }
         }
     })?;
 

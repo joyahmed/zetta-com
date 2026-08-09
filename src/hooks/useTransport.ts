@@ -54,12 +54,8 @@ export const useTransport = () => {
 			setError(parsed);
 			return;
 		}
-		if (!peer.trim()) {
-			setError(
-				'Pick someone from the list, or add an address under Advanced.'
-			);
-			return;
-		}
+		// An address is optional now: discovery finds everyone on a normal
+		// network, and Advanced exists for the ones that filter mDNS.
 		try {
 			await invoke('net_start', { port: parsed, peer });
 		} catch (e) {

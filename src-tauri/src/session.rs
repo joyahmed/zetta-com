@@ -28,7 +28,7 @@ pub struct Session {
     /// Advertising and browsing. Dropping it withdraws us from the network, so
     /// stopping the transport also makes us disappear from other rosters
     /// immediately rather than after a timeout.
-    discovery: Option<discovery::Discovery>,
+    discovery: Option<Arc<discovery::Discovery>>,
     stop: Arc<AtomicBool>,
 }
 
@@ -95,12 +95,37 @@ pub fn start(port: u16, peer: &str) -> Result<Session> {
     // networks filter mDNS, and on those the app still works with a peer typed
     // by hand — which is why manual entries exist at all.
     let discovery = match discovery::start(port) {
-        Ok(d) => Some(d),
+        Ok(d) => Some(Arc::new(d)),
         Err(e) => {
             eprintln!("[mdns] discovery unavailable: {e:#}");
             None
         }
     };
+
+    // Keep the send list in step with the roster. A second is plenty: peers
+    // appear over mDNS in a couple of seconds and go quiet over seven, so this
+    // is never the slow part, and doing it per frame would mean scanning the
+    // roster fifty times a second to learn nothing new.
+    let sync_stop = stop.clone();
+    let sync_net = net.clone();
+    let sync_discovery = discovery.clone();
+    thread::Builder::new()
+        .name("roster-sync".into())
+        .spawn(move || {
+            while !sync_stop.load(Ordering::Relaxed) {
+                if let Some(d) = sync_discovery.as_ref() {
+                    let peers = d.peers();
+                    let known: Vec<_> = peers.iter().map(|p| p.addr).collect();
+                    let live: Vec<_> = peers
+                        .iter()
+                        .filter(|p| sync_net.heard_within(p.addr, net::HEARD_TIMEOUT))
+                        .map(|p| p.addr)
+                        .collect();
+                    sync_net.set_targets(known, live);
+                }
+                thread::sleep(Duration::from_secs(1));
+            }
+        })?;
 
     Ok(Session {
         _audio: pipeline.handle,
