@@ -17,6 +17,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Windows first, then macOS, then Linux. The order is the order the
+          # jobs are listed and started in, and it is deliberate: Windows is
+          # where this is actually used, so it is the one worth seeing fail
+          # first — and the one whose installer carries the firewall rule, the
+          # part most likely to break.
+          - platform: windows-latest
+            args: ''
+
           # Apple silicon only. There was an Intel job here on `macos-13`,
           # built natively rather than cross-compiled because libopus is C
           # built by autotools and cross-compiling it means fighting configure
@@ -35,9 +43,8 @@ jobs:
           # cross-compile fight, and doubles the download for everyone.
           - platform: macos-latest
             args: --target aarch64-apple-darwin
+
           - platform: ubuntu-latest
-            args: ''
-          - platform: windows-latest
             args: ''
 
     runs-on: ${{ matrix.platform }}
