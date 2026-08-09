@@ -40,9 +40,22 @@ build friction on all three platforms) plus mixing and per-speaker gain, and it
 becomes the project rather than a step in it. If real full duplex is ever the
 requirement, Mumble already solves it.
 
-**Everyone, always.** Holding the key reaches every live peer. No per-person
-targeting, and so no target field in the header. The old version had per-person
-hotkeys and that is not how it actually got used.
+**Address one machine or everyone.** ~~No per-person targeting~~ — reversed on
+2026-08-09, the same day it was settled twice the other way, once the actual
+purpose became clear: this is for **directing devs and staff**, not for chatting
+with peers. Telling one person something is the main use, not a variation on it.
+
+Being wrong twice about this was cheap, and only because of the fan-out
+decision below: every send was already a unicast to each recipient in turn, so
+addressing one person is a shorter list rather than a different protocol. No
+change to the wire format, no field in the header. Had this been built on
+broadcast, the same reversal would have meant rewriting the transport.
+
+The target lives in Rust rather than in the window, because a global shortcut
+fires with the window closed and still has to know who it is talking to. A
+target that has gone offline sends to nobody rather than falling back to
+everyone: quietly redirecting an instruction meant for one person to the whole
+room is worse than not sending it.
 
 **Unicast fan-out, not broadcast.** One encode, N sends. Broadcast looks cheaper
 and is a trap: some WiFi access points rate-limit or drop broadcast frames, so
@@ -294,16 +307,18 @@ resolved the name differently. They stay separate as actions and as code paths,
 while still sharing one socket and one header — a port per feature is what let
 the halves arrive independently in the first place.
 
-**Auto message** (step 5) means **preset messages on a key**: a short editable
-list — "on my way", "lunch?", "call me" — each sendable with one shortcut and no
-typing. Not auto-replies and not scheduled announcements; both were considered
-and neither is what is wanted. It is the direct descendant of v1's text ping,
-and it needs nothing from presence beyond knowing who is live.
+**Auto message** (step 5) means **preset messages on a key**: an editable list,
+each entry sendable with one shortcut and no typing. Not auto-replies and not
+scheduled announcements; both were considered and neither is wanted.
 
-Adding a PC therefore means adding someone who *receives*, not someone who can
-be singled out. Confirmed 2026-08-09, after the roster raised the question a
-second time: the header keeps no target field, and a field nobody sets is not
-worth carrying.
+**Nothing is shipped in that list.** It arrived with "on my way", "lunch?" and
+"call me", and those were the wrong register for a tool used to direct staff —
+inventing pleasantries on somebody's behalf was presumptuous. The mechanism
+stays for anyone who wants a key that fires a sentence they actually use.
+
+**Adding a PC means adding someone who can be addressed**, individually or as
+part of the room. That is the reversal above: the roster is the choice of who is
+being spoken to, not merely a list of who exists.
 
 ---
 
