@@ -149,7 +149,18 @@ pub fn start(
     manual_entries: &[String],
     transmit: Arc<AtomicBool>,
 ) -> Result<Session> {
-    let manual = manual_peers(manual_entries);
+    // The typed Address is just another manual peer. It used to be handled
+    // separately: seeded into the send list at bind and then quietly dropped a
+    // second later, when the roster sync replaced the list with discovery plus
+    // the manual entries and forgot it existed. Everything went to the right
+    // place for exactly one second.
+    let mut entries: Vec<String> = manual_entries.to_vec();
+    let typed = peer.trim();
+    if !typed.is_empty() && !entries.iter().any(|e| e == typed) {
+        entries.push(typed.to_string());
+    }
+    let manual = manual_peers(&entries);
+
     let pipeline = audio::start(transmit)?;
     let net = Arc::new(net::start(port, peer, pipeline.frames_in.clone())?);
 
@@ -205,10 +216,17 @@ pub fn start(
                         known.push(m.addr);
                     }
                 }
+                // A typed address is an instruction, not a guess: send there
+                // whether or not it has ever answered. Discovered peers still
+                // have to prove they are present, since an advertisement is
+                // only evidence that a machine was once switched on.
                 let live: Vec<_> = known
                     .iter()
                     .copied()
-                    .filter(|a| sync_net.heard_within(*a, net::HEARD_TIMEOUT))
+                    .filter(|a| {
+                        sync_manual.iter().any(|m| m.addr == *a)
+                            || sync_net.heard_within(*a, net::HEARD_TIMEOUT)
+                    })
                     .collect();
                 sync_net.set_targets(known, live);
                 thread::sleep(Duration::from_secs(1));

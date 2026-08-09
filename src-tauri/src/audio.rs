@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -46,6 +46,24 @@ const MAX_PACKET: usize = 4_000;
 /// How many 20 ms frames a ring may hold — roughly 160 ms of slack.
 const RING_FRAMES: usize = 8;
 const BITRATE: i32 = 32_000;
+/// How often to check whether the default devices have changed underneath us.
+const DEVICE_POLL: Duration = Duration::from_millis(1_000);
+/// Pause before rebuilding, so a device that is flapping cannot spin the loop
+/// and so the previous generation's threads have let go first.
+const RETRY_DELAY: Duration = Duration::from_millis(700);
+
+/// A fingerprint of the current default devices, used to notice a change.
+///
+/// Polled rather than only signalled, because a device *appearing* raises no
+/// stream error: the app that started with no microphone is exactly the one
+/// that will never be told when one is plugged in.
+fn describe_devices() -> (Option<String>, Option<String>) {
+    let host = cpal::default_host();
+    (
+        host.default_input_device().map(|d| device_name(&d)),
+        host.default_output_device().map(|d| device_name(&d)),
+    )
+}
 
 /// Dropping this stops the pipeline: the audio thread sees the flag, returns,
 /// and the streams drop with it.
@@ -132,19 +150,78 @@ pub fn start(transmit: Arc<AtomicBool>) -> Result<Pipeline> {
     let (out_tx, out_rx) = mpsc::sync_channel::<Frame>(8);
     let (in_tx, in_rx) = mpsc::sync_channel::<(SocketAddr, Option<Vec<u8>>)>(32);
 
+    // The receiver is shared rather than moved, because the pipeline is rebuilt
+    // whenever devices change and each generation needs it back. Only one
+    // decoder runs at a time, so the lock is never contended — a new generation
+    // simply waits for the old one to let go.
+    let in_rx = Arc::new(Mutex::new(in_rx));
+
     let thread_stop = stop.clone();
     thread::Builder::new()
         .name("audio".into())
-        .spawn(move || match build(&thread_stop, &transmit, out_tx, in_rx) {
-            Ok(streams) => {
-                let _ = ready_tx.send(Ok(()));
-                while !thread_stop.load(Ordering::Relaxed) {
-                    thread::sleep(Duration::from_millis(50));
+        .spawn(move || {
+            let mut first = true;
+            while !thread_stop.load(Ordering::Relaxed) {
+                // Signals this generation to stop, independently of the whole
+                // pipeline stopping.
+                let generation = Arc::new(AtomicBool::new(false));
+                let rebuild = Arc::new(AtomicBool::new(false));
+
+                let built = build(
+                    &thread_stop,
+                    &generation,
+                    &rebuild,
+                    &transmit,
+                    out_tx.clone(),
+                    in_rx.clone(),
+                );
+
+                let streams = match built {
+                    Ok(s) => {
+                        if first {
+                            let _ = ready_tx.send(Ok(()));
+                            first = false;
+                        }
+                        s
+                    }
+                    Err(e) => {
+                        if first {
+                            let _ = ready_tx.send(Err(e));
+                            return;
+                        }
+                        // Later failures are usually a device mid-reconnect.
+                        // Report and try again rather than giving up: a
+                        // headset that dropped will be back in a moment.
+                        eprintln!("[audio] rebuild failed, retrying: {e:#}");
+                        thread::sleep(RETRY_DELAY);
+                        continue;
+                    }
+                };
+
+                // Watch for the reason to start over.
+                let watching = describe_devices();
+                while !thread_stop.load(Ordering::Relaxed)
+                    && !rebuild.load(Ordering::Relaxed)
+                {
+                    thread::sleep(DEVICE_POLL);
+                    // Polled as well as signalled, because a device *appearing*
+                    // raises no stream error at all — and that is the case that
+                    // bites: the app starts with no microphone, one is plugged
+                    // in, and nothing ever tells it.
+                    if describe_devices() != watching {
+                        eprintln!("[audio] default devices changed, rebuilding");
+                        break;
+                    }
                 }
+
+                generation.store(true, Ordering::Relaxed);
                 drop(streams);
-            }
-            Err(e) => {
-                let _ = ready_tx.send(Err(e));
+                if !thread_stop.load(Ordering::Relaxed) {
+                    // Long enough for the old worker threads to notice and let
+                    // go of the shared receiver, and to stop a flapping device
+                    // from spinning this loop.
+                    thread::sleep(RETRY_DELAY);
+                }
             }
         })?;
 
@@ -160,11 +237,15 @@ pub fn start(transmit: Arc<AtomicBool>) -> Result<Pipeline> {
     })
 }
 
+type SharedFrames = Arc<Mutex<Receiver<(SocketAddr, Option<Vec<u8>>)>>>;
+
 fn build(
     stop: &Arc<AtomicBool>,
+    generation: &Arc<AtomicBool>,
+    rebuild: &Arc<AtomicBool>,
     transmit: &Arc<AtomicBool>,
     out_tx: SyncSender<Frame>,
-    in_rx: Receiver<(SocketAddr, Option<Vec<u8>>)>,
+    in_rx: SharedFrames,
 ) -> Result<Streams> {
     let host = cpal::default_host();
 
@@ -186,7 +267,7 @@ fn build(
 
     let input_stream = match in_sel {
         Some((device, cfg)) => Some(build_capture(
-            &device, &cfg, stop, transmit, &stats, out_tx,
+            &device, &cfg, stop, generation, rebuild, transmit, &stats, out_tx,
         )?),
         None => {
             eprintln!("[audio] no usable input device — listening only");
@@ -197,7 +278,7 @@ fn build(
 
     let output_stream = match out_sel {
         Some((device, cfg)) => Some(build_playback(
-            &device, &cfg, stop, transmit, &stats, in_rx,
+            &device, &cfg, stop, generation, rebuild, transmit, &stats, in_rx,
         )?),
         None => {
             eprintln!("[audio] no usable output device — sending only");
@@ -245,10 +326,18 @@ fn build(
     })
 }
 
-// A plain fn, not a closure, so it can be used in more than one match arm.
-// cpal 0.18 collapsed StreamError and friends into one `cpal::Error`.
-fn on_err(e: cpal::Error) {
-    eprintln!("[audio] stream error: {e}");
+/// Builds the error callback for a stream.
+///
+/// A stream error is almost always the device going away, so it asks for a
+/// rebuild rather than only complaining. Returned fresh per call because it
+/// captures the flag, and cpal 0.18 collapsed StreamError and friends into one
+/// `cpal::Error`.
+fn on_err(rebuild: &Arc<AtomicBool>) -> impl FnMut(cpal::Error) + Send + 'static {
+    let rebuild = rebuild.clone();
+    move |e| {
+        eprintln!("[audio] stream error, will rebuild: {e}");
+        rebuild.store(true, Ordering::Relaxed);
+    }
 }
 
 /// Microphone → ring A → Opus → `out_tx`. Owns ring A entirely, so nothing
@@ -257,6 +346,8 @@ fn build_capture(
     device: &Device,
     cfg: &SupportedStreamConfig,
     stop: &Arc<AtomicBool>,
+    generation: &Arc<AtomicBool>,
+    rebuild: &Arc<AtomicBool>,
     transmit: &Arc<AtomicBool>,
     stats: &Arc<Stats>,
     out_tx: SyncSender<Frame>,
@@ -298,7 +389,7 @@ fn build_capture(
                     }
                 }
             },
-            on_err,
+            on_err(rebuild),
             None,
         )?,
         SampleFormat::I16 => device.build_input_stream(
@@ -311,13 +402,14 @@ fn build_capture(
                     }
                 }
             },
-            on_err,
+            on_err(rebuild),
             None,
         )?,
         f => return Err(anyhow!("unsupported input sample format {f:?}")),
     };
 
     let enc_stop = stop.clone();
+    let enc_generation = generation.clone();
     let enc_transmit = transmit.clone();
     let enc_stats = stats.clone();
     thread::Builder::new().name("encoder".into()).spawn(move || {
@@ -334,7 +426,7 @@ fn build_capture(
         let mut pcm = [0i16; MAX_FRAME];
         let mut packet = [0u8; MAX_PACKET];
 
-        while !enc_stop.load(Ordering::Relaxed) {
+        while !enc_stop.load(Ordering::Relaxed) && !enc_generation.load(Ordering::Relaxed) {
             let have = cons.occupied_len();
             enc_stats.a_occ.store(have as u64, Ordering::Relaxed);
             if have < frame {
@@ -377,9 +469,11 @@ fn build_playback(
     device: &Device,
     cfg: &SupportedStreamConfig,
     stop: &Arc<AtomicBool>,
+    generation: &Arc<AtomicBool>,
+    rebuild: &Arc<AtomicBool>,
     transmit: &Arc<AtomicBool>,
     stats: &Arc<Stats>,
-    in_rx: Receiver<(SocketAddr, Option<Vec<u8>>)>,
+    in_rx: SharedFrames,
 ) -> Result<cpal::Stream> {
     let hz = cfg.sample_rate();
     let frame = (hz / 50) as usize;
@@ -447,7 +541,7 @@ fn build_playback(
                         f.fill(v);
                     }
                 },
-                on_err,
+                on_err(rebuild),
                 None,
             )?
         }
@@ -484,7 +578,7 @@ fn build_playback(
                         f.fill(cons.try_pop().unwrap_or(0));
                     }
                 },
-                on_err,
+                on_err(rebuild),
                 None,
             )?
         }
@@ -492,7 +586,14 @@ fn build_playback(
     };
 
     let dec_stop = stop.clone();
+    let dec_generation = generation.clone();
     thread::Builder::new().name("mixer".into()).spawn(move || {
+        // Held for this generation's lifetime. The next one blocks here until
+        // we let go, which is what keeps a rebuild from running two mixers.
+        let in_rx = match in_rx.lock() {
+            Ok(r) => r,
+            Err(e) => e.into_inner(),
+        };
         // One decoder and one pending queue per talker. The decoder is the
         // reason: Opus decoder state is a running conversation with a single
         // encoder, so pushing two people's packets through one produces
@@ -501,7 +602,7 @@ fn build_playback(
         let mut out = [0i16; MAX_FRAME];
         let mut mixed = [0i32; MAX_FRAME];
 
-        while !dec_stop.load(Ordering::Relaxed) {
+        while !dec_stop.load(Ordering::Relaxed) && !dec_generation.load(Ordering::Relaxed) {
             // Timed out rather than blocking, so the thread notices the stop
             // flag instead of parking forever on a silent peer.
             let (from, packet) = match in_rx.recv_timeout(Duration::from_millis(200)) {
