@@ -11,7 +11,12 @@ const Empty = ({ children }: { children: React.ReactNode }) => (
 /// The roster is the control surface: selecting somebody points voice and text
 /// at that machine alone, and "Everyone" puts it back. That is the difference
 /// between an intercom and a way of telling one person something.
-export const Roster = ({ peers, running, target, onTarget }: RosterProps) => {
+export const Roster = ({
+	peers,
+	running,
+	target,
+	onTarget
+}: RosterProps) => {
 	const live = peers.filter(p => p.live).length;
 
 	return (
@@ -19,7 +24,9 @@ export const Roster = ({ peers, running, target, onTarget }: RosterProps) => {
 			<div className='flex items-baseline justify-between'>
 				<h2 className='text-sm font-medium'>Send to</h2>
 				<span className='text-xs text-slate-500 dark:text-slate-400'>
-					{running ? `${live} of ${peers.length} live` : 'not looking'}
+					{running
+						? `${live} of ${peers.length} live`
+						: 'not looking'}
 				</span>
 			</div>
 
