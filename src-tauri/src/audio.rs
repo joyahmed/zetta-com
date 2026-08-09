@@ -1,9 +1,11 @@
-//! In-process audio loopback: mic → Opus encode → Opus decode → speakers.
+//! Capture, encode, decode, playback. Knows nothing about sockets — `session`
+//! wires the two ends to the network.
 //!
 //! Thread layout — this is the design:
 //!
 //!   [input callback]   real-time   mic → mono i16 → ring A
-//!   [codec worker]     normal      ring A → 20 ms frame → encode → decode → ring B
+//!   [encoder]          normal      ring A → 20 ms frame → Opus → frames_out
+//!   [decoder]          normal      frames_in → Opus → ring B
 //!   [output callback]  real-time   ring B → speakers, silence on underrun
 //!
 //! The two callbacks run on real-time threads owned by the audio driver. No
@@ -20,7 +22,7 @@ use anyhow::{anyhow, Context, Result};
 use audiopus::coder::{Decoder, Encoder};
 use audiopus::{Application, Bitrate, Channels, SampleRate};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use cpal::{Device, SampleFormat, SupportedStreamConfig};
+use cpal::{Device, Host, SampleFormat, SupportedStreamConfig};
 use ringbuf::traits::{Consumer, Observer, Producer, Split};
 use ringbuf::HeapRb;
 
@@ -43,7 +45,7 @@ const MAX_PACKET: usize = 4_000;
 const RING_FRAMES: usize = 8;
 const BITRATE: i32 = 32_000;
 
-/// Dropping this stops the loopback: the audio thread sees the flag, returns,
+/// Dropping this stops the pipeline: the audio thread sees the flag, returns,
 /// and the streams drop with it.
 pub struct Handle {
     stop: Arc<AtomicBool>,
@@ -56,10 +58,11 @@ impl Drop for Handle {
 }
 
 /// Streams stay on the thread that built them and are never moved off it —
-/// `cpal::Stream` is not `Send` on every backend.
+/// `cpal::Stream` is not `Send` on every backend. Either may be absent: a PC
+/// with no microphone still listens, and one with no output still sends.
 struct Streams {
-    _input: cpal::Stream,
-    _output: cpal::Stream,
+    _input: Option<cpal::Stream>,
+    _output: Option<cpal::Stream>,
 }
 
 /// Counters, so a glitch says which link produced it instead of being guessed
@@ -68,12 +71,11 @@ struct Streams {
 #[derive(Default)]
 struct Stats {
     /// Samples the capture callback threw away because ring A was full: the
-    /// codec worker is not keeping up.
+    /// encoder is not keeping up.
     in_drops: AtomicU64,
-    /// Frames encoded and decoded.
+    /// Frames encoded.
     frames: AtomicU64,
-    /// Output callbacks that produced silence because ring B was short: the
-    /// pipeline is not keeping up with the sound card.
+    /// Output callbacks that produced silence because ring B was short.
     underruns: AtomicU64,
     /// Times playback had to re-bank after running dry. A steady count here is
     /// the signature of a periodic stutter.
@@ -145,40 +147,108 @@ fn build(
     in_rx: Receiver<Vec<u8>>,
 ) -> Result<Streams> {
     let host = cpal::default_host();
-    let input = host
-        .default_input_device()
-        .ok_or_else(|| anyhow!("no default input device"))?;
-    let output = host
-        .default_output_device()
-        .ok_or_else(|| anyhow!("no default output device"))?;
 
-    let in_cfg = pick(&input, true)?;
-    let out_cfg = pick(&output, false)?;
+    // Capture and playback are independently optional. Most people on an
+    // intercom never talk, so a PC with no microphone — or one whose headset
+    // has not connected, or whose mic is off in privacy settings — must still
+    // hear everyone. Losing playback because there is no capture device is
+    // exactly backwards.
+    let in_sel = select(&host, true);
+    let out_sel = select(&host, false);
 
-    // Opus can encode at one rate and decode at another, so a 16 kHz headset
-    // mic feeding 48 kHz speakers needs no resampler anywhere in this file.
-    let in_hz = in_cfg.sample_rate();
-    let out_hz = out_cfg.sample_rate();
-    let in_frame = (in_hz / 50) as usize; // 20 ms
-    let out_frame = (out_hz / 50) as usize;
-    let enc_rate = opus_rate(in_hz)?;
-    let dec_rate = opus_rate(out_hz)?;
+    if in_sel.is_none() && out_sel.is_none() {
+        return Err(anyhow!(
+            "no usable audio device for either capture or playback"
+        ));
+    }
+
+    let stats = Arc::new(Stats::default());
+
+    let input_stream = match in_sel {
+        Some((device, cfg)) => Some(build_capture(&device, &cfg, stop, &stats, out_tx)?),
+        None => {
+            eprintln!("[audio] no usable input device — listening only");
+            drop(out_tx);
+            None
+        }
+    };
+
+    let output_stream = match out_sel {
+        Some((device, cfg)) => Some(build_playback(&device, &cfg, stop, &stats, in_rx)?),
+        None => {
+            eprintln!("[audio] no usable output device — sending only");
+            drop(in_rx);
+            None
+        }
+    };
+
+    // One line a second. Cheap enough to leave in while the pipeline is being
+    // tuned, and it turns "it sounds wrong" into a number that names the link.
+    let report_stop = stop.clone();
+    thread::Builder::new()
+        .name("audio-stats".into())
+        .spawn(move || {
+            let (mut p_drops, mut p_frames, mut p_under, mut p_primes) = (0u64, 0u64, 0u64, 0u64);
+            while !report_stop.load(Ordering::Relaxed) {
+                thread::sleep(Duration::from_secs(1));
+                let drops = stats.in_drops.load(Ordering::Relaxed);
+                let frames = stats.frames.load(Ordering::Relaxed);
+                let under = stats.underruns.load(Ordering::Relaxed);
+                let primes = stats.primes.load(Ordering::Relaxed);
+                eprintln!(
+                    "[audio] 1s frames {} drops {} underruns {} reprimes {} ringA {} ringB {}",
+                    frames - p_frames,
+                    drops - p_drops,
+                    under - p_under,
+                    primes - p_primes,
+                    stats.a_occ.load(Ordering::Relaxed),
+                    stats.b_occ.load(Ordering::Relaxed),
+                );
+                (p_drops, p_frames, p_under, p_primes) = (drops, frames, under, primes);
+            }
+        })?;
+
+    if let Some(s) = &input_stream {
+        s.play()?;
+    }
+    if let Some(s) = &output_stream {
+        s.play()?;
+    }
+
+    Ok(Streams {
+        _input: input_stream,
+        _output: output_stream,
+    })
+}
+
+// A plain fn, not a closure, so it can be used in more than one match arm.
+// cpal 0.18 collapsed StreamError and friends into one `cpal::Error`.
+fn on_err(e: cpal::Error) {
+    eprintln!("[audio] stream error: {e}");
+}
+
+/// Microphone → ring A → Opus → `out_tx`. Owns ring A entirely, so nothing
+/// about it exists when there is no input device.
+fn build_capture(
+    device: &Device,
+    cfg: &SupportedStreamConfig,
+    stop: &Arc<AtomicBool>,
+    stats: &Arc<Stats>,
+    out_tx: SyncSender<Frame>,
+) -> Result<cpal::Stream> {
+    let hz = cfg.sample_rate();
+    let frame = (hz / 50) as usize; // 20 ms
+    let rate = opus_rate(hz)?;
+    let ch = cfg.channels() as usize;
+    let stream_cfg = cfg.config();
 
     eprintln!(
         "[audio] in  {:?} {}Hz {:?} {}ch frame {}",
-        device_name(&input),
-        in_hz,
-        in_cfg.sample_format(),
-        in_cfg.channels(),
-        in_frame
-    );
-    eprintln!(
-        "[audio] out {:?} {}Hz {:?} {}ch frame {}",
-        device_name(&output),
-        out_hz,
-        out_cfg.sample_format(),
-        out_cfg.channels(),
-        out_frame
+        device_name(device),
+        hz,
+        cfg.sample_format(),
+        cfg.channels(),
+        frame
     );
 
     // Sized in frames, not seconds. A ring's capacity is a latency ceiling: if
@@ -186,33 +256,19 @@ fn build(
     // second of audio and it never gives that back, so you hear yourself late
     // for the rest of the session. At RING_FRAMES the same stall costs 160 ms
     // and is paid back by dropping, which is the right trade for speech.
-    let (mut prod_a, mut cons_a) = HeapRb::<i16>::new(in_frame * RING_FRAMES).split();
-    let (mut prod_b, mut cons_b) = HeapRb::<i16>::new(out_frame * RING_FRAMES).split();
-
-    let in_ch = in_cfg.channels() as usize;
-    let out_ch = out_cfg.channels() as usize;
-    let in_stream_cfg = in_cfg.config();
-    let out_stream_cfg = out_cfg.config();
-
-    // A plain fn, not a closure, so it can be used in more than one match arm.
-    // cpal 0.18 collapsed StreamError and friends into one `cpal::Error`.
-    fn on_err(e: cpal::Error) {
-        eprintln!("[audio] stream error: {e}");
-    }
-
-    let stats = Arc::new(Stats::default());
+    let (mut prod, mut cons) = HeapRb::<i16>::new(frame * RING_FRAMES).split();
 
     let st = stats.clone();
-    let input_stream = match in_cfg.sample_format() {
-        SampleFormat::F32 => input.build_input_stream(
-            in_stream_cfg.clone(),
+    let stream = match cfg.sample_format() {
+        SampleFormat::F32 => device.build_input_stream(
+            stream_cfg.clone(),
             move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                for frame in data.chunks_exact(in_ch) {
-                    let sum: f32 = frame.iter().sum();
-                    let v = (sum / in_ch as f32).clamp(-1.0, 1.0);
+                for f in data.chunks_exact(ch) {
+                    let sum: f32 = f.iter().sum();
+                    let v = (sum / ch as f32).clamp(-1.0, 1.0);
                     // Full ring drops the sample. Correct behaviour here:
                     // never block a real-time callback.
-                    if prod_a.try_push((v * i16::MAX as f32) as i16).is_err() {
+                    if prod.try_push((v * i16::MAX as f32) as i16).is_err() {
                         st.in_drops.fetch_add(1, Ordering::Relaxed);
                     }
                 }
@@ -220,12 +276,12 @@ fn build(
             on_err,
             None,
         )?,
-        SampleFormat::I16 => input.build_input_stream(
-            in_stream_cfg.clone(),
+        SampleFormat::I16 => device.build_input_stream(
+            stream_cfg.clone(),
             move |data: &[i16], _: &cpal::InputCallbackInfo| {
-                for frame in data.chunks_exact(in_ch) {
-                    let sum: i32 = frame.iter().map(|s| *s as i32).sum();
-                    if prod_a.try_push((sum / in_ch as i32) as i16).is_err() {
+                for f in data.chunks_exact(ch) {
+                    let sum: i32 = f.iter().map(|s| *s as i32).sum();
+                    if prod.try_push((sum / ch as i32) as i16).is_err() {
                         st.in_drops.fetch_add(1, Ordering::Relaxed);
                     }
                 }
@@ -236,6 +292,78 @@ fn build(
         f => return Err(anyhow!("unsupported input sample format {f:?}")),
     };
 
+    let enc_stop = stop.clone();
+    let enc_stats = stats.clone();
+    thread::Builder::new().name("encoder".into()).spawn(move || {
+        let mut enc = match Encoder::new(rate, Channels::Mono, Application::Voip) {
+            Ok(e) => e,
+            Err(e) => return eprintln!("[audio] encoder: {e}"),
+        };
+        if let Err(e) = enc.set_bitrate(Bitrate::BitsPerSecond(BITRATE)) {
+            eprintln!("[audio] set_bitrate: {e}");
+        }
+
+        // Sized for the worst case, sliced to the real frame. Allocated once,
+        // outside the loop, so the loop itself never allocates.
+        let mut pcm = [0i16; MAX_FRAME];
+        let mut packet = [0u8; MAX_PACKET];
+
+        while !enc_stop.load(Ordering::Relaxed) {
+            let have = cons.occupied_len();
+            enc_stats.a_occ.store(have as u64, Ordering::Relaxed);
+            if have < frame {
+                thread::sleep(Duration::from_millis(2));
+                continue;
+            }
+            cons.pop_slice(&mut pcm[..frame]);
+
+            let n = match enc.encode(&pcm[..frame], &mut packet) {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("[audio] encode: {e}");
+                    continue;
+                }
+            };
+            enc_stats.frames.fetch_add(1, Ordering::Relaxed);
+
+            // try_send, not send: a full channel means the network side has
+            // stalled, and blocking here would back the stall up into the
+            // capture ring and then into dropped microphone samples.
+            let _ = out_tx.try_send(Frame {
+                data: packet[..n].to_vec(),
+                samples: frame as u32,
+            });
+        }
+    })?;
+
+    Ok(stream)
+}
+
+/// `in_rx` → Opus → ring B → speakers. Owns ring B entirely.
+fn build_playback(
+    device: &Device,
+    cfg: &SupportedStreamConfig,
+    stop: &Arc<AtomicBool>,
+    stats: &Arc<Stats>,
+    in_rx: Receiver<Vec<u8>>,
+) -> Result<cpal::Stream> {
+    let hz = cfg.sample_rate();
+    let frame = (hz / 50) as usize;
+    let rate = opus_rate(hz)?;
+    let ch = cfg.channels() as usize;
+    let stream_cfg = cfg.config();
+
+    eprintln!(
+        "[audio] out {:?} {}Hz {:?} {}ch frame {}",
+        device_name(device),
+        hz,
+        cfg.sample_format(),
+        cfg.channels(),
+        frame
+    );
+
+    let (mut prod, mut cons) = HeapRb::<i16>::new(frame * RING_FRAMES).split();
+
     // Playback priming. The decoder delivers a whole frame at once every 20 ms
     // while this callback asks for samples on its own schedule, so the ring is
     // routinely a few samples short of what is being asked for. Filling that
@@ -243,20 +371,20 @@ fn build(
     // that often is heard as a screech, not as silence. So: stay quiet until a
     // few frames have banked, then drain whole callbacks only; if it ever runs
     // dry, go quiet and bank again. Silence in clean chunks is inaudible.
-    let prime = out_frame * 3;
+    let prime = frame * 3;
 
-    let output_stream = match out_cfg.sample_format() {
+    let stream = match cfg.sample_format() {
         SampleFormat::F32 => {
             // Captured by the FnMut closure. Only this callback touches it, so
             // it needs no atomic and no lock — which matters on an RT thread.
             let mut primed = false;
             let st = stats.clone();
-            output.build_output_stream(
-                out_stream_cfg.clone(),
+            device.build_output_stream(
+                stream_cfg.clone(),
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
-                    let have = cons_b.occupied_len();
+                    let have = cons.occupied_len();
                     st.b_occ.store(have as u64, Ordering::Relaxed);
-                    let need = data.len() / out_ch;
+                    let need = data.len() / ch;
                     if !primed {
                         if have < prime {
                             st.underruns.fetch_add(1, Ordering::Relaxed);
@@ -272,9 +400,9 @@ fn build(
                         data.fill(0.0);
                         return;
                     }
-                    for frame in data.chunks_exact_mut(out_ch) {
-                        let v = cons_b.try_pop().unwrap_or(0) as f32 / i16::MAX as f32;
-                        frame.fill(v);
+                    for f in data.chunks_exact_mut(ch) {
+                        let v = cons.try_pop().unwrap_or(0) as f32 / i16::MAX as f32;
+                        f.fill(v);
                     }
                 },
                 on_err,
@@ -284,12 +412,12 @@ fn build(
         SampleFormat::I16 => {
             let mut primed = false;
             let st = stats.clone();
-            output.build_output_stream(
-                out_stream_cfg.clone(),
+            device.build_output_stream(
+                stream_cfg.clone(),
                 move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
-                    let have = cons_b.occupied_len();
+                    let have = cons.occupied_len();
                     st.b_occ.store(have as u64, Ordering::Relaxed);
-                    let need = data.len() / out_ch;
+                    let need = data.len() / ch;
                     if !primed {
                         if have < prime {
                             st.underruns.fetch_add(1, Ordering::Relaxed);
@@ -305,8 +433,8 @@ fn build(
                         data.fill(0);
                         return;
                     }
-                    for frame in data.chunks_exact_mut(out_ch) {
-                        frame.fill(cons_b.try_pop().unwrap_or(0));
+                    for f in data.chunks_exact_mut(ch) {
+                        f.fill(cons.try_pop().unwrap_or(0));
                     }
                 },
                 on_err,
@@ -316,57 +444,9 @@ fn build(
         f => return Err(anyhow!("unsupported output sample format {f:?}")),
     };
 
-    // Encoder and decoder are separate threads now, not one codec loop. They
-    // used to be joined only because the output of one fed the input of the
-    // other; with the socket in between they are independent, and a peer who
-    // stops talking must not stall the microphone.
-    let enc_stop = stop.clone();
-    let enc_stats = stats.clone();
-    thread::Builder::new().name("encoder".into()).spawn(move || {
-        let mut enc = match Encoder::new(enc_rate, Channels::Mono, Application::Voip) {
-            Ok(e) => e,
-            Err(e) => return eprintln!("[audio] encoder: {e}"),
-        };
-        if let Err(e) = enc.set_bitrate(Bitrate::BitsPerSecond(BITRATE)) {
-            eprintln!("[audio] set_bitrate: {e}");
-        }
-
-        // Sized for the worst case, sliced to the real frame. Allocated once,
-        // outside the loop, so the loop itself never allocates.
-        let mut pcm = [0i16; MAX_FRAME];
-        let mut packet = [0u8; MAX_PACKET];
-
-        while !enc_stop.load(Ordering::Relaxed) {
-            let have = cons_a.occupied_len();
-            enc_stats.a_occ.store(have as u64, Ordering::Relaxed);
-            if have < in_frame {
-                thread::sleep(Duration::from_millis(2));
-                continue;
-            }
-            cons_a.pop_slice(&mut pcm[..in_frame]);
-
-            let n = match enc.encode(&pcm[..in_frame], &mut packet) {
-                Ok(n) => n,
-                Err(e) => {
-                    eprintln!("[audio] encode: {e}");
-                    continue;
-                }
-            };
-            enc_stats.frames.fetch_add(1, Ordering::Relaxed);
-
-            // try_send, not send: a full channel means the network side has
-            // stalled, and blocking here would back the stall up into the
-            // capture ring and then into dropped microphone samples.
-            let _ = out_tx.try_send(Frame {
-                data: packet[..n].to_vec(),
-                samples: in_frame as u32,
-            });
-        }
-    })?;
-
     let dec_stop = stop.clone();
     thread::Builder::new().name("decoder".into()).spawn(move || {
-        let mut dec = match Decoder::new(dec_rate, Channels::Mono) {
+        let mut dec = match Decoder::new(rate, Channels::Mono) {
             Ok(d) => d,
             Err(e) => return eprintln!("[audio] decoder: {e}"),
         };
@@ -375,65 +455,53 @@ fn build(
         while !dec_stop.load(Ordering::Relaxed) {
             // Timed out rather than blocking, so the thread notices the stop
             // flag instead of parking forever on a silent peer.
-            let frame = match in_rx.recv_timeout(Duration::from_millis(200)) {
-                Ok(f) => f,
+            let packet = match in_rx.recv_timeout(Duration::from_millis(200)) {
+                Ok(p) => p,
                 Err(RecvTimeoutError::Timeout) => continue,
                 Err(RecvTimeoutError::Disconnected) => break,
             };
 
-            // Decoding to `out_frame` rather than the sender's frame size is
-            // what converts the rate: libopus resamples internally, so nothing
-            // here has to, and the two machines need not agree on a rate.
-            let got = match dec.decode(Some(&frame[..]), &mut out[..out_frame], false) {
+            // Decoding to the local frame size rather than the sender's is what
+            // converts the rate: libopus resamples internally, so nothing here
+            // has to, and the two machines never have to agree on a rate.
+            let got = match dec.decode(Some(&packet[..]), &mut out[..frame], false) {
                 Ok(n) => n,
                 Err(e) => {
                     eprintln!("[audio] decode: {e}");
                     continue;
                 }
             };
-            prod_b.push_slice(&out[..got]);
+            prod.push_slice(&out[..got]);
         }
     })?;
 
-    // One line a second. Cheap enough to leave in while the pipeline is being
-    // tuned, and it turns "it sounds wrong" into a number that names the link.
-    let report_stop = stop.clone();
-    thread::Builder::new().name("audio-stats".into()).spawn(move || {
-        let (mut p_drops, mut p_frames, mut p_under, mut p_primes) = (0u64, 0u64, 0u64, 0u64);
-        while !report_stop.load(Ordering::Relaxed) {
-            thread::sleep(Duration::from_secs(1));
-            let drops = stats.in_drops.load(Ordering::Relaxed);
-            let frames = stats.frames.load(Ordering::Relaxed);
-            let under = stats.underruns.load(Ordering::Relaxed);
-            let primes = stats.primes.load(Ordering::Relaxed);
-            eprintln!(
-                "[audio] 1s frames {} drops {} underruns {} reprimes {} ringA {} ringB {}",
-                frames - p_frames,
-                drops - p_drops,
-                under - p_under,
-                primes - p_primes,
-                stats.a_occ.load(Ordering::Relaxed),
-                stats.b_occ.load(Ordering::Relaxed),
-            );
-            (p_drops, p_frames, p_under, p_primes) = (drops, frames, under, primes);
-        }
-    })?;
-
-    input_stream.play()?;
-    output_stream.play()?;
-
-    Ok(Streams {
-        _input: input_stream,
-        _output: output_stream,
-    })
+    Ok(stream)
 }
 
-/// cpal 0.18 replaced `Device::name()` with a whole `DeviceDescription`.
-fn device_name(device: &Device) -> String {
-    device
-        .description()
-        .map(|d| d.name().to_string())
-        .unwrap_or_else(|_| "<unknown>".to_string())
+/// The default device for a direction and a config we can actually use, or
+/// `None` with the reason logged. Returning `None` rather than an error is the
+/// point: one missing direction must not take the other down with it.
+fn select(host: &Host, input: bool) -> Option<(Device, SupportedStreamConfig)> {
+    let which = if input { "input" } else { "output" };
+    let device = if input {
+        host.default_input_device()
+    } else {
+        host.default_output_device()
+    };
+    let device = match device {
+        Some(d) => d,
+        None => {
+            eprintln!("[audio] no default {which} device");
+            return None;
+        }
+    };
+    match pick(&device, input) {
+        Ok(cfg) => Some((device, cfg)),
+        Err(e) => {
+            eprintln!("[audio] {e:#}");
+            None
+        }
+    }
 }
 
 /// Map a rate to Opus's enum. Anything outside its five rates is a bug in
@@ -449,6 +517,14 @@ fn opus_rate(hz: u32) -> Result<SampleRate> {
     })
 }
 
+/// cpal 0.18 replaced `Device::name()` with a whole `DeviceDescription`.
+fn device_name(device: &Device) -> String {
+    device
+        .description()
+        .map(|d| d.name().to_string())
+        .unwrap_or_else(|_| "<unknown>".to_string())
+}
+
 /// The best Opus-compatible config the device offers, highest rate first and
 /// fewest channels within a rate. Reports what the device *does* offer when
 /// nothing matches, because a device that cannot be used is worth naming — a
@@ -461,8 +537,8 @@ fn pick(device: &Device, input: bool) -> Result<SupportedStreamConfig> {
     };
 
     // Rate first, then format, then fewest channels. Format has to be part of
-    // the choice: devices list several, and picking one the callbacks below do
-    // not implement gets rejected by the stream builder rather than by pick().
+    // the choice: devices list several, and picking one the callbacks do not
+    // implement gets rejected by the stream builder rather than by pick().
     for &hz in &OPUS_RATES {
         for &fmt in &USABLE_FORMATS {
             if let Some(r) = ranges
