@@ -3,11 +3,14 @@ import { Alert } from './components/Alert';
 import { Diagnostics } from './components/Diagnostics';
 import { Disclosure } from './components/Disclosure';
 import { Roster } from './components/Roster';
+import { TalkBar } from './components/TalkBar';
 import { useLocalName } from './hooks/useLocalName';
+import { usePtt } from './hooks/usePtt';
 import { useTransport } from './hooks/useTransport';
 
 const App = () => {
 	const me = useLocalName();
+	const held = usePtt();
 	const {
 		port,
 		setPort,
@@ -47,6 +50,8 @@ const App = () => {
 				</header>
 
 				{error && <Alert message={error} />}
+
+				{running && <TalkBar held={held} key_='F8' />}
 
 				<Roster
 					peers={peers}

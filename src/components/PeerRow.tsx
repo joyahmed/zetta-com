@@ -12,8 +12,14 @@ export const PeerRow = ({ peer, selected, onSelect }: PeerRowProps) => (
 	>
 		<Dot on={peer.live} />
 		<span className='flex-1 truncate font-medium'>{peer.name}</span>
-		<span className='truncate font-mono text-xs text-slate-500 dark:text-slate-400'>
-			{peer.addr}
-		</span>
+		{peer.talking ? (
+			<span className='rounded-full bg-teal-500 px-2 py-0.5 text-[0.65rem] font-medium tracking-wide text-white uppercase'>
+				talking
+			</span>
+		) : (
+			<span className='truncate font-mono text-xs text-slate-500 dark:text-slate-400'>
+				{peer.addr}
+			</span>
+		)}
 	</button>
 );

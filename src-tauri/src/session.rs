@@ -62,13 +62,14 @@ impl Session {
             .unwrap_or_default();
         for p in &mut peers {
             p.live = self.net.heard_within(p.addr, net::HEARD_TIMEOUT);
+            p.talking = self.net.talking(p.addr);
         }
         peers
     }
 }
 
-pub fn start(port: u16, peer: &str) -> Result<Session> {
-    let pipeline = audio::start()?;
+pub fn start(port: u16, peer: &str, transmit: Arc<AtomicBool>) -> Result<Session> {
+    let pipeline = audio::start(transmit)?;
     let net = Arc::new(net::start(port, peer, pipeline.frames_in.clone())?);
 
     let stop = Arc::new(AtomicBool::new(false));

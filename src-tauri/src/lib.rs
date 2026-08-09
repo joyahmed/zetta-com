@@ -4,7 +4,10 @@ mod discovery;
 mod net;
 mod session;
 
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Shortcut, ShortcutState};
 
 use tauri::{
     menu::{Menu, MenuItem},
@@ -22,6 +25,17 @@ fn greet(name: &str) -> String {
 /// socket on drop, so setting this to `None` is the whole of `net_stop`.
 struct NetState(Mutex<Option<session::Session>>);
 
+/// True only while the push-to-talk key is held.
+///
+/// It lives outside the session and outlives it, because the shortcut is
+/// registered once at launch: the key must not stop working because somebody
+/// pressed Stop and Start.
+struct Ptt(Arc<AtomicBool>);
+
+/// The push-to-talk key. F8 by default — a single key, so it can be *held*,
+/// and one nothing else tends to claim. Reassignable in #13.
+const PTT_KEY: Code = Code::F8;
+
 /// Commands return `Result<_, String>` rather than `anyhow::Result` because
 /// anyhow's error type is not serialisable across the IPC boundary. The
 /// conversion belongs here, at the edge, not inside `net`.
@@ -29,6 +43,7 @@ struct NetState(Mutex<Option<session::Session>>);
 fn net_start(
     app: tauri::AppHandle,
     state: State<NetState>,
+    ptt: State<Ptt>,
     port: u16,
     peer: String,
 ) -> Result<(), String> {
@@ -36,7 +51,8 @@ fn net_start(
     // Drop any existing transport before binding, or starting on the same port
     // fails with "address already in use" against ourselves.
     *guard = None;
-    *guard = Some(session::start(port, &peer).map_err(|e| format!("{e:#}"))?);
+    *guard =
+        Some(session::start(port, &peer, ptt.0.clone()).map_err(|e| format!("{e:#}"))?);
 
     // Saved only after a successful bind, so a setting that cannot work is
     // never the one restored at next launch.
@@ -58,6 +74,14 @@ fn net_peers(state: State<NetState>) -> Result<Vec<discovery::Peer>, String> {
         .as_ref()
         .map(|s| s.peers())
         .unwrap_or_default())
+}
+
+/// Whether the push-to-talk key is down right now. Polled with everything else
+/// rather than pushed as an event: the UI already asks four times a second, and
+/// a second channel would be one more thing to keep in agreement with reality.
+#[tauri::command]
+fn ptt_held(ptt: State<Ptt>) -> bool {
+    ptt.0.load(Ordering::Relaxed)
 }
 
 /// The name this machine advertises itself under, so the UI can show you which
@@ -97,12 +121,35 @@ fn net_stats(state: State<NetState>) -> Result<Option<net::Stats>, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Created before the builder because both the shortcut handler and the
+    // session need it, and the handler is installed while the app is being
+    // configured rather than after.
+    let ptt = Arc::new(AtomicBool::new(false));
+    let ptt_for_handler = ptt.clone();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(move |_app, shortcut, event| {
+                    if shortcut.matches(tauri_plugin_global_shortcut::Modifiers::empty(), PTT_KEY) {
+                        // Held, not toggled. The key going up has to be as
+                        // reliable as it going down, or a missed release
+                        // leaves the microphone open with nothing on screen
+                        // to say so.
+                        ptt_for_handler.store(
+                            matches!(event.state(), ShortcutState::Pressed),
+                            Ordering::Relaxed,
+                        );
+                    }
+                })
+                .build(),
+        )
         .invoke_handler(tauri::generate_handler![
-            greet, net_start, net_stop, net_stats, net_peers, local_name, config_get
+            greet, net_start, net_stop, net_stats, net_peers, local_name, config_get,
+            ptt_held
         ])
-        .setup(|app| {
+        .setup(move |app| {
             let show = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&show, &quit])?;
@@ -140,8 +187,18 @@ pub fn run() {
             // loaded, and from a file rather than the environment, because two
             // ways to configure one thing guarantees an afternoon spent on
             // "why is it using the other port".
+            // Register the key itself. A global shortcut that loses a
+            // registration race to another application does nothing and says
+            // nothing, which is a v1-class silent failure, so the result is
+            // reported rather than discarded.
+            match app.global_shortcut().register(Shortcut::new(None, PTT_KEY)) {
+                Ok(()) => eprintln!("[ptt] hold {PTT_KEY:?} to talk"),
+                Err(e) => eprintln!("[ptt] could not register {PTT_KEY:?}: {e}"),
+            }
+            app.manage(Ptt(ptt.clone()));
+
             let session = match config::load(app.handle()) {
-                Some(cfg) => match session::start(cfg.port, &cfg.peer) {
+                Some(cfg) => match session::start(cfg.port, &cfg.peer, ptt.clone()) {
                     Ok(s) => {
                         eprintln!("[net] auto-started on {} -> {}", cfg.port, cfg.peer);
                         Some(s)

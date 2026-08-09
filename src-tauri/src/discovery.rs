@@ -40,6 +40,9 @@ pub struct Peer {
     /// roster rather than removed, because "was here, now gone" is more useful
     /// than a name silently disappearing.
     pub live: bool,
+    /// Set by the session from the socket, not by discovery: audio arriving is
+    /// what "talking" means, and mDNS has nothing to say about it.
+    pub talking: bool,
 }
 
 struct Entry {
@@ -181,6 +184,7 @@ pub fn start(port: u16) -> Result<Discovery> {
                                     name: name.clone(),
                                     addr,
                                     live: true,
+                                    talking: false,
                                 },
                                 seen: Instant::now(),
                             },

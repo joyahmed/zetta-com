@@ -18,7 +18,13 @@ type Peer = {
 	name: string;
 	addr: string;
 	live: boolean;
+	/// Audio arrived from them in the last fraction of a second. With
+	/// push-to-talk, receiving audio *is* the fact that somebody is speaking —
+	/// no flag in the header could say it more reliably.
+	talking: boolean;
 };
+
+type TalkBarProps = { held: boolean; key_: string };
 
 type FieldProps = {
 	label: string;

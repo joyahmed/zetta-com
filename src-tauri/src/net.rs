@@ -34,6 +34,10 @@ const HEARTBEAT_EVERY: Duration = Duration::from_secs(2);
 /// Silence longer than this and a peer is treated as gone. Three missed
 /// heartbeats, so one dropped datagram never greys anybody out.
 pub const HEARD_TIMEOUT: Duration = Duration::from_secs(7);
+/// Audio arrives every 20 ms while somebody holds their key, so silence this
+/// long means they let go. Short enough that the indicator tracks speech,
+/// long enough that a couple of dropped packets do not make it flicker.
+const TALKING_TIMEOUT: Duration = Duration::from_millis(400);
 
 /// ```text
 ///  0        1        2                 4                              8
@@ -136,6 +140,14 @@ pub struct Handle {
     /// while after it is switched off, and a roster that claims someone can
     /// hear you when they cannot is worse than no roster at all.
     heard: Arc<Mutex<HashMap<SocketAddr, Instant>>>,
+    /// When audio — as opposed to a heartbeat — last arrived from each address.
+    ///
+    /// This is how the UI knows who is speaking, and it needs no flag in the
+    /// header to do it: with push-to-talk, audio is only sent while somebody is
+    /// holding their key, so receiving audio *is* the fact that they are
+    /// talking. A field would have said the same thing less reliably, since it
+    /// could disagree with whether packets were actually arriving.
+    last_audio: Arc<Mutex<HashMap<SocketAddr, Instant>>>,
 }
 
 impl Drop for Handle {
@@ -205,12 +217,13 @@ impl Handle {
     /// present. Computed at read time from the last-heard stamp, so it cannot
     /// be stale between polls the way a swept flag can.
     pub fn heard_within(&self, addr: SocketAddr, within: Duration) -> bool {
-        let map = match self.heard.lock() {
-            Ok(m) => m,
-            Err(e) => e.into_inner(),
-        };
-        map.get(&addr)
-            .is_some_and(|t| t.elapsed() < within)
+        stamped_within(&self.heard, addr, within)
+    }
+
+    /// Whether audio arrived from this address recently enough to call them
+    /// currently speaking.
+    pub fn talking(&self, addr: SocketAddr) -> bool {
+        stamped_within(&self.last_audio, addr, TALKING_TIMEOUT)
     }
 
     pub fn stats(&self) -> Stats {
@@ -224,6 +237,21 @@ impl Handle {
             last_seq: self.counters.last_seq.load(Ordering::Relaxed) as u16,
         }
     }
+}
+
+/// Shared by presence and talking: both ask "was this address stamped recently".
+/// Computed at read time so it cannot be stale between polls the way a swept
+/// flag can.
+fn stamped_within(
+    map: &Arc<Mutex<HashMap<SocketAddr, Instant>>>,
+    addr: SocketAddr,
+    within: Duration,
+) -> bool {
+    let map = match map.lock() {
+        Ok(m) => m,
+        Err(e) => e.into_inner(),
+    };
+    map.get(&addr).is_some_and(|t| t.elapsed() < within)
 }
 
 /// Resolve to an IPv4 address specifically.
@@ -375,6 +403,8 @@ pub fn start(
     let tx_sock = socket.try_clone().context("cloning socket for sender")?;
 
     let heard: Arc<Mutex<HashMap<SocketAddr, Instant>>> = Arc::new(Mutex::new(HashMap::new()));
+    let last_audio: Arc<Mutex<HashMap<SocketAddr, Instant>>> =
+        Arc::new(Mutex::new(HashMap::new()));
 
     // Say we are still here, whether or not anyone is talking. Without this a
     // silent peer is indistinguishable from a switched-off one, which is the
@@ -428,6 +458,7 @@ pub fn start(
     let rx_stop = stop.clone();
     let rx_counters = counters.clone();
     let rx_heard = heard.clone();
+    let rx_last_audio = last_audio.clone();
     thread::Builder::new().name("net-rx".into()).spawn(move || {
         let mut buf = [0u8; 2048];
         // One reorder window per source. Sequence numbers are per-sender, so a
@@ -462,6 +493,14 @@ pub fn start(
             rx_counters.rx.fetch_add(1, Ordering::Relaxed);
 
             if h.kind == KIND_AUDIO && len > HEADER_LEN {
+                {
+                    let mut map = match rx_last_audio.lock() {
+                        Ok(m) => m,
+                        Err(e) => e.into_inner(),
+                    };
+                    map.insert(from, Instant::now());
+                }
+
                 let (jitter, expected) = windows
                     .entry(from)
                     .or_insert_with(|| (Jitter::new(), None));
@@ -503,5 +542,6 @@ pub fn start(
         ts: AtomicU64::new(0),
         targets,
         heard,
+        last_audio,
     })
 }

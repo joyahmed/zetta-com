@@ -113,7 +113,16 @@ pub struct Pipeline {
     pub handle: Handle,
 }
 
-pub fn start() -> Result<Pipeline> {
+/// `transmit` is push-to-talk: true only while the key is held.
+///
+/// It gates both directions, and the second one is the point of the whole
+/// architecture. Nothing is encoded or sent while it is false, and *local
+/// playback is silenced while it is true* — so your speakers cannot be playing
+/// someone else's voice into your own open microphone. That mute is the entire
+/// echo strategy, and the reason full duplex and acoustic echo cancellation
+/// were rejected at the start: the echo path never exists, so there is nothing
+/// to cancel.
+pub fn start(transmit: Arc<AtomicBool>) -> Result<Pipeline> {
     let stop = Arc::new(AtomicBool::new(false));
     let (ready_tx, ready_rx) = mpsc::channel::<Result<()>>();
 
@@ -126,7 +135,7 @@ pub fn start() -> Result<Pipeline> {
     let thread_stop = stop.clone();
     thread::Builder::new()
         .name("audio".into())
-        .spawn(move || match build(&thread_stop, out_tx, in_rx) {
+        .spawn(move || match build(&thread_stop, &transmit, out_tx, in_rx) {
             Ok(streams) => {
                 let _ = ready_tx.send(Ok(()));
                 while !thread_stop.load(Ordering::Relaxed) {
@@ -153,6 +162,7 @@ pub fn start() -> Result<Pipeline> {
 
 fn build(
     stop: &Arc<AtomicBool>,
+    transmit: &Arc<AtomicBool>,
     out_tx: SyncSender<Frame>,
     in_rx: Receiver<(SocketAddr, Option<Vec<u8>>)>,
 ) -> Result<Streams> {
@@ -175,7 +185,9 @@ fn build(
     let stats = Arc::new(Stats::default());
 
     let input_stream = match in_sel {
-        Some((device, cfg)) => Some(build_capture(&device, &cfg, stop, &stats, out_tx)?),
+        Some((device, cfg)) => Some(build_capture(
+            &device, &cfg, stop, transmit, &stats, out_tx,
+        )?),
         None => {
             eprintln!("[audio] no usable input device — listening only");
             drop(out_tx);
@@ -184,7 +196,9 @@ fn build(
     };
 
     let output_stream = match out_sel {
-        Some((device, cfg)) => Some(build_playback(&device, &cfg, stop, &stats, in_rx)?),
+        Some((device, cfg)) => Some(build_playback(
+            &device, &cfg, stop, transmit, &stats, in_rx,
+        )?),
         None => {
             eprintln!("[audio] no usable output device — sending only");
             drop(in_rx);
@@ -243,6 +257,7 @@ fn build_capture(
     device: &Device,
     cfg: &SupportedStreamConfig,
     stop: &Arc<AtomicBool>,
+    transmit: &Arc<AtomicBool>,
     stats: &Arc<Stats>,
     out_tx: SyncSender<Frame>,
 ) -> Result<cpal::Stream> {
@@ -303,6 +318,7 @@ fn build_capture(
     };
 
     let enc_stop = stop.clone();
+    let enc_transmit = transmit.clone();
     let enc_stats = stats.clone();
     thread::Builder::new().name("encoder".into()).spawn(move || {
         let mut enc = match Encoder::new(rate, Channels::Mono, Application::Voip) {
@@ -326,6 +342,13 @@ fn build_capture(
                 continue;
             }
             cons.pop_slice(&mut pcm[..frame]);
+
+            // Drained either way. Skipping the pop would let the ring fill
+            // while the key is up, and the first thing anyone heard after
+            // pressing it would be a hundred milliseconds of stale room noise.
+            if !enc_transmit.load(Ordering::Relaxed) {
+                continue;
+            }
 
             let n = match enc.encode(&pcm[..frame], &mut packet) {
                 Ok(n) => n,
@@ -354,6 +377,7 @@ fn build_playback(
     device: &Device,
     cfg: &SupportedStreamConfig,
     stop: &Arc<AtomicBool>,
+    transmit: &Arc<AtomicBool>,
     stats: &Arc<Stats>,
     in_rx: Receiver<(SocketAddr, Option<Vec<u8>>)>,
 ) -> Result<cpal::Stream> {
@@ -389,9 +413,17 @@ fn build_playback(
             // it needs no atomic and no lock — which matters on an RT thread.
             let mut primed = false;
             let st = stats.clone();
+            let out_transmit = transmit.clone();
             device.build_output_stream(
                 stream_cfg.clone(),
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
+                    // Silent while transmitting. This is the echo prevention:
+                    // without it the speakers play the far end into the open
+                    // microphone and everyone hears themselves back.
+                    if out_transmit.load(Ordering::Relaxed) {
+                        data.fill(0.0);
+                        return;
+                    }
                     let have = cons.occupied_len();
                     st.b_occ.store(have as u64, Ordering::Relaxed);
                     let need = data.len() / ch;
@@ -422,9 +454,14 @@ fn build_playback(
         SampleFormat::I16 => {
             let mut primed = false;
             let st = stats.clone();
+            let out_transmit = transmit.clone();
             device.build_output_stream(
                 stream_cfg.clone(),
                 move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
+                    if out_transmit.load(Ordering::Relaxed) {
+                        data.fill(0);
+                        return;
+                    }
                     let have = cons.occupied_len();
                     st.b_occ.store(have as u64, Ordering::Relaxed);
                     let need = data.len() / ch;
