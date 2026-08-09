@@ -12,7 +12,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager, State, WindowEvent,
+    Emitter, Manager, State, WindowEvent,
 };
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
@@ -45,6 +45,38 @@ enum Action {
     TalkTo(usize),
     /// Aim at that machine and bring the window up ready to type.
     MessageTo(usize),
+    /// Hold to talk to the whole room, whoever was selected.
+    TalkAll,
+    /// Aim at the whole room and bring the window up ready to type.
+    MessageAll,
+    /// Open the window with the add-a-PC field ready.
+    AddPc,
+    /// Show the list of every key and what it does.
+    ShowShortcuts,
+}
+
+/// One row of the shortcut list the UI shows.
+///
+/// Carries whether it registered, because a global shortcut that lost a race to
+/// another application does nothing and says nothing — and a list that only
+/// shows intentions is worse than none, since it looks like a promise.
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ShortcutInfo {
+    label: String,
+    keys: String,
+    registered: bool,
+}
+
+type ShortcutList = Arc<Mutex<Vec<ShortcutInfo>>>;
+
+struct Shortcuts(ShortcutList);
+
+/// Every key, what it does, and whether it actually took.
+#[tauri::command]
+fn shortcuts(state: State<Shortcuts>) -> Result<Vec<ShortcutInfo>, String> {
+    let l = state.0.lock().map_err(|e| e.to_string())?;
+    Ok(l.clone())
 }
 
 /// The roster entry at a one-based position, in the order the UI shows them.
@@ -70,13 +102,36 @@ type Bindings = Arc<Mutex<Vec<(Shortcut, Action)>>>;
 /// A global shortcut that loses a registration race to another application does
 /// nothing and says nothing, which is a v1-class silent failure — so both the
 /// parse and the registration report rather than being discarded.
-fn bind(app: &tauri::AppHandle, bindings: &Bindings, spec: &str, action: Action) {
+fn bind(
+    app: &tauri::AppHandle,
+    bindings: &Bindings,
+    listing: &ShortcutList,
+    label: &str,
+    spec: &str,
+    action: Action,
+) {
     if spec.trim().is_empty() {
         return;
     }
+    let record = |registered: bool| {
+        let mut l = match listing.lock() {
+            Ok(l) => l,
+            Err(e) => e.into_inner(),
+        };
+        l.push(ShortcutInfo {
+            label: label.to_string(),
+            keys: spec.replace("CommandOrControl", "Ctrl").replace("Digit", ""),
+            registered,
+        });
+    };
+
     let shortcut: Shortcut = match spec.parse() {
         Ok(s) => s,
-        Err(e) => return eprintln!("[keys] {spec:?} is not a shortcut: {e}"),
+        Err(e) => {
+            eprintln!("[keys] {spec:?} is not a shortcut: {e}");
+            record(false);
+            return;
+        }
     };
     match app.global_shortcut().register(shortcut) {
         Ok(()) => {
@@ -85,9 +140,12 @@ fn bind(app: &tauri::AppHandle, bindings: &Bindings, spec: &str, action: Action)
                 Err(e) => e.into_inner(),
             };
             list.push((shortcut, action));
-            eprintln!("[keys] {spec} registered");
+            record(true);
         }
-        Err(e) => eprintln!("[keys] {spec} could not be registered: {e}"),
+        Err(e) => {
+            eprintln!("[keys] {spec} could not be registered: {e}");
+            record(false);
+        }
     }
 }
 
@@ -291,6 +349,7 @@ pub fn run() {
     // configured rather than after.
     let ptt = Arc::new(AtomicBool::new(false));
     let bindings: Bindings = Arc::new(Mutex::new(Vec::new()));
+    let listing: ShortcutList = Arc::new(Mutex::new(Vec::new()));
 
     let ptt_for_handler = ptt.clone();
     let bindings_for_handler = bindings.clone();
@@ -392,13 +451,49 @@ pub fn run() {
                                 }
                             }
                         }
+                        Action::TalkAll => {
+                            let pressed = matches!(event.state(), ShortcutState::Pressed);
+                            if pressed {
+                                if let Ok(g) = app.state::<NetState>().0.lock() {
+                                    if let Some(s) = g.as_ref() {
+                                        s.set_target(None);
+                                    }
+                                }
+                            }
+                            ptt_for_handler.store(pressed, Ordering::Relaxed);
+                        }
+                        Action::MessageAll => {
+                            if matches!(event.state(), ShortcutState::Pressed) {
+                                if let Ok(g) = app.state::<NetState>().0.lock() {
+                                    if let Some(s) = g.as_ref() {
+                                        s.set_target(None);
+                                    }
+                                }
+                                reveal(app);
+                            }
+                        }
+                        // These two only ask the window to show something. The
+                        // work is the frontend's, so the key emits an event
+                        // rather than reaching into it.
+                        Action::AddPc => {
+                            if matches!(event.state(), ShortcutState::Pressed) {
+                                reveal(app);
+                                let _ = app.emit("open-add-pc", ());
+                            }
+                        }
+                        Action::ShowShortcuts => {
+                            if matches!(event.state(), ShortcutState::Pressed) {
+                                reveal(app);
+                                let _ = app.emit("show-shortcuts", ());
+                            }
+                        }
                     }
                 })
                 .build(),
         )
         .invoke_handler(tauri::generate_handler![
             greet, net_start, net_stop, net_stats, net_peers, local_name, config_get,
-            ptt_held, send_text, messages, manual_peers, set_target
+            ptt_held, send_text, messages, manual_peers, set_target, shortcuts
         ])
         .setup(move |app| {
             let show = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
@@ -444,15 +539,57 @@ pub fn run() {
             // reported rather than discarded.
             let cfg = config::load(app.handle()).unwrap_or_default();
             let handle = app.handle().clone();
-            bind(&handle, &bindings, &cfg.talk_shortcut, Action::Talk);
+            bind(
+                &handle,
+                &bindings,
+                &listing,
+                "Talk to whoever is selected",
+                &cfg.talk_shortcut,
+                Action::Talk,
+            );
             for p in &cfg.presets {
                 bind(
                     &handle,
                     &bindings,
+                    &listing,
+                    &format!("Send \u{201c}{}\u{201d}", p.label),
                     &p.shortcut,
                     Action::Preset(p.text.clone()),
                 );
             }
+
+            bind(
+                &handle,
+                &bindings,
+                &listing,
+                "Talk to everyone",
+                "CommandOrControl+Alt+Digit0",
+                Action::TalkAll,
+            );
+            bind(
+                &handle,
+                &bindings,
+                &listing,
+                "Message everyone",
+                "CommandOrControl+Shift+Digit0",
+                Action::MessageAll,
+            );
+            bind(
+                &handle,
+                &bindings,
+                &listing,
+                "Add a PC",
+                "CommandOrControl+Alt+KeyA",
+                Action::AddPc,
+            );
+            bind(
+                &handle,
+                &bindings,
+                &listing,
+                "Show shortcuts",
+                "CommandOrControl+Alt+KeyK",
+                Action::ShowShortcuts,
+            );
 
             // A key per position in the roster. Ctrl+Alt+N holds to talk to
             // that machine; Ctrl+Shift+N aims at it and opens the window ready
@@ -466,17 +603,22 @@ pub fn run() {
                 bind(
                     &handle,
                     &bindings,
+                    &listing,
+                    &format!("Talk to PC {slot}"),
                     &format!("CommandOrControl+Alt+Digit{slot}"),
                     Action::TalkTo(slot),
                 );
                 bind(
                     &handle,
                     &bindings,
+                    &listing,
+                    &format!("Message PC {slot}"),
                     &format!("CommandOrControl+Shift+Digit{slot}"),
                     Action::MessageTo(slot),
                 );
             }
             app.manage(Ptt(ptt.clone()));
+            app.manage(Shortcuts(listing.clone()));
 
             let session = match config::load(app.handle()) {
                 Some(cfg) => {

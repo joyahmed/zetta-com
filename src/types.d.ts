@@ -112,6 +112,20 @@ type DiagnosticsProps = {
 type DisclosureProps = {
 	label: string;
 	children: React.ReactNode;
+	/// Driven from outside when a shortcut opens the panel; uncontrolled
+	/// otherwise, so a plain disclosure stays a plain disclosure.
+	open?: boolean;
+	onOpenChange?: (open: boolean) => void;
 };
+
+type ShortcutInfo = {
+	label: string;
+	keys: string;
+	/// False when another application already owns the combination. The key
+	/// then does nothing at all, which is why this is shown rather than logged.
+	registered: boolean;
+};
+
+type ShortcutsProps = { shortcuts: ShortcutInfo[] };
 
 type AlertProps = { message: string };

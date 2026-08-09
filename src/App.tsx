@@ -5,11 +5,13 @@ import { Disclosure } from './components/Disclosure';
 import { Messages } from './components/Messages';
 import { Presets } from './components/Presets';
 import { Roster } from './components/Roster';
+import { Shortcuts } from './components/Shortcuts';
 import { TalkBar } from './components/TalkBar';
 import { useLocalName } from './hooks/useLocalName';
 import { useManualPeers } from './hooks/useManualPeers';
 import { useMessages } from './hooks/useMessages';
 import { usePtt } from './hooks/usePtt';
+import { useShortcuts } from './hooks/useShortcuts';
 import { useTarget } from './hooks/useTarget';
 import { useTransport } from './hooks/useTransport';
 
@@ -32,6 +34,13 @@ const App = () => {
 	const { messages, send } = useMessages(running);
 	const { manual, presets, add, remove } = useManualPeers(setError);
 	const { target, setTarget } = useTarget(setError);
+	const {
+		shortcuts,
+		showShortcuts,
+		setShowShortcuts,
+		showAddPc,
+		setShowAddPc
+	} = useShortcuts();
 
 	// Named for the talk bar and the message box, so it always says who is
 	// about to be addressed rather than leaving it to be remembered.
@@ -89,7 +98,19 @@ const App = () => {
 					to={targetName}
 				/>
 
-				<Disclosure label='Advanced'>
+				<Disclosure
+					label='Shortcuts'
+					open={showShortcuts}
+					onOpenChange={setShowShortcuts}
+				>
+					<Shortcuts shortcuts={shortcuts} />
+				</Disclosure>
+
+				<Disclosure
+					label='Advanced'
+					open={showAddPc || undefined}
+					onOpenChange={setShowAddPc}
+				>
 					<Advanced
 						port={port}
 						peer={peer}
