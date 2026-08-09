@@ -35,6 +35,7 @@ impl Default for Config {
             manual: Vec::new(),
             labels: HashMap::new(),
             talk_shortcut: default_talk_shortcut(),
+            shortcuts: HashMap::new(),
             input_device: None,
             output_device: None,
             presets: default_presets(),
@@ -72,6 +73,12 @@ pub struct Config {
     /// nothing else tends to claim.
     #[serde(default = "default_talk_shortcut")]
     pub talk_shortcut: String,
+
+    /// Rebound keys, by the id `keys::EDITABLE` gives them. Absent means the
+    /// default, so a config written before a key existed still loads and a
+    /// default can be improved later without overriding somebody's choice.
+    #[serde(default)]
+    pub shortcuts: HashMap<String, String>,
 
     /// Microphone and speakers by name, or the system default when empty.
     ///

@@ -15,6 +15,18 @@ export const useShortcuts = () => {
 		invoke<ShortcutInfo[]>('shortcuts').then(setShortcuts).catch(() => {});
 	}, []);
 
+	/// Rebind one key. The command returns the whole list back, already
+	/// re-registered, so the panel shows what actually took rather than what was
+	/// asked for — a combination another application owns comes back struck
+	/// through instead of looking like it worked.
+	const set = async (id: string, spec: string) => {
+		try {
+			setShortcuts(await invoke<ShortcutInfo[]>('set_shortcut', { id, spec }));
+		} catch (e) {
+			console.error('[shortcuts]', e);
+		}
+	};
+
 	useEffect(() => {
 		// Adding a PC lost its global key: it is a once-per-machine job with a
 		// button already on screen, and it was costing a system-wide chord.
@@ -29,6 +41,7 @@ export const useShortcuts = () => {
 
 	return {
 		shortcuts,
+		setShortcut: set,
 		showShortcuts,
 		setShowShortcuts,
 		showAddPc,

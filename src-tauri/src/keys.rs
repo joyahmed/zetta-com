@@ -58,6 +58,45 @@ pub struct ShortcutInfo {
     pub label: String,
     pub keys: String,
     pub registered: bool,
+    /// Set for the keys a user may change, and the name their choice is saved
+    /// under. `None` for the per-PC ranges: those are nine keys generated from
+    /// one pattern, and letting each be rebound separately would turn a rule
+    /// you can hold in your head into eighteen facts you cannot.
+    pub id: Option<String>,
+}
+
+/// The keys that can be rebound, in the order they are shown, with what they do
+/// and what they are unless somebody says otherwise.
+pub const EDITABLE: [(&str, &str, &str); 6] = [
+    ("talk", "Talk to whoever is selected", "F8"),
+    ("talk-all", "Talk to everyone", "CommandOrControl+Digit0"),
+    (
+        "message-all",
+        "Message everyone",
+        "CommandOrControl+Shift+Digit0",
+    ),
+    ("start-stop", "Start or stop", "F9"),
+    ("open-window", "Open the window", "F10"),
+    ("show-shortcuts", "Show shortcuts", "F1"),
+];
+
+/// What a rebindable key is set to: the saved choice, or its default.
+pub fn spec_for(cfg: &crate::config::Config, id: &str) -> String {
+    if let Some(s) = cfg.shortcuts.get(id) {
+        if !s.trim().is_empty() {
+            return s.clone();
+        }
+    }
+    // `talk_shortcut` predates the map and is still where an older config keeps
+    // it, so it is honoured rather than silently replaced by the default.
+    if id == "talk" && !cfg.talk_shortcut.trim().is_empty() {
+        return cfg.talk_shortcut.clone();
+    }
+    EDITABLE
+        .iter()
+        .find(|(k, _, _)| *k == id)
+        .map(|(_, _, d)| d.to_string())
+        .unwrap_or_default()
 }
 
 pub type ShortcutList = Arc<Mutex<Vec<ShortcutInfo>>>;
@@ -89,6 +128,36 @@ fn peer_at(app: &tauri::AppHandle, slot: usize) -> Option<discovery::Peer> {
 /// there are never more than a handful.
 pub type Bindings = Arc<Mutex<Vec<(Shortcut, Action)>>>;
 
+/// The binding table, so a key can be changed without restarting.
+pub struct BindingsState(pub Bindings);
+
+/// Throw every registration away and build them again from the config.
+///
+/// Wholesale rather than unregistering one key and adding another: the listing
+/// the UI shows is rebuilt from the same pass, so doing it piecemeal would mean
+/// keeping two structures in step and the list quietly drifting from what is
+/// actually registered. There are about thirty keys and this happens when
+/// somebody edits one.
+pub fn rebind(
+    app: &tauri::AppHandle,
+    bindings: &Bindings,
+    listing: &ShortcutList,
+    cfg: &crate::config::Config,
+) {
+    if let Err(e) = app.global_shortcut().unregister_all() {
+        eprintln!("[keys] could not release the old keys: {e}");
+    }
+    match bindings.lock() {
+        Ok(mut b) => b.clear(),
+        Err(e) => e.into_inner().clear(),
+    }
+    match listing.lock() {
+        Ok(mut l) => l.clear(),
+        Err(e) => e.into_inner().clear(),
+    }
+    register_all(app, bindings, listing, cfg);
+}
+
 /// Register a shortcut and remember what it does.
 ///
 /// A global shortcut that loses a registration race to another application does
@@ -101,6 +170,7 @@ pub fn bind(
     label: &str,
     spec: &str,
     action: Action,
+    id: Option<&str>,
 ) {
     if spec.trim().is_empty() {
         return;
@@ -111,6 +181,7 @@ pub fn bind(
             Err(e) => e.into_inner(),
         };
         l.push(ShortcutInfo {
+            id: id.map(str::to_string),
             label: label.to_string(),
             // Tauri's spec names a letter "KeyA" and a number "Digit1"; both
             // are noise on a key cap. Stripping only "Digit" left the letter
@@ -276,14 +347,36 @@ pub fn register_all(
     listing: &ShortcutList,
     cfg: &crate::config::Config,
 ) {
-    bind(
-        app,
-        bindings,
-        listing,
-        "Talk to whoever is selected",
-        &cfg.talk_shortcut,
-        Action::Talk,
-    );
+    // The rebindable ones, in EDITABLE's order, each taking the saved choice or
+    // falling back to its default.
+    //
+    // Talking is Ctrl+number by default and messaging Ctrl+Shift+number: one
+    // modifier for the thing done constantly, the same number either way. Those
+    // are *global*, so the app holds Ctrl+0…9 for every other application on
+    // the machine while it runs. The app's own actions are single function keys
+    // instead — they are pressed occasionally, which is when a chord is hardest,
+    // and F1 for the key list because every other program has taught that.
+    for (id, label, _) in EDITABLE {
+        let action = match id {
+            "talk" => Action::Talk,
+            "talk-all" => Action::TalkAll,
+            "message-all" => Action::MessageAll,
+            "start-stop" => Action::ToggleTransport,
+            "open-window" => Action::ShowWindow,
+            "show-shortcuts" => Action::ShowShortcuts,
+            _ => continue,
+        };
+        bind(
+            app,
+            bindings,
+            listing,
+            label,
+            &spec_for(cfg, id),
+            action,
+            Some(id),
+        );
+    }
+
     for p in &cfg.presets {
         bind(
             app,
@@ -292,33 +385,8 @@ pub fn register_all(
             &format!("Send \u{201c}{}\u{201d}", p.label),
             &p.shortcut,
             Action::Preset(p.text.clone()),
+            None,
         );
-    }
-
-    for (label, spec, action) in [
-        // Talking is Ctrl+number, messaging is Ctrl+Shift+number: one modifier
-        // for the thing you do constantly, and the same number either way.
-        //
-        // These are *global* keys, so the app holds Ctrl+0…9 for every other
-        // application on the machine while it runs — browser tabs and editor
-        // tabs included. Chosen deliberately for the shorter chord; the app
-        // keys below stay on Ctrl+Alt, where nothing else is looking.
-        ("Talk to everyone", "CommandOrControl+Digit0", Action::TalkAll),
-        (
-            "Message everyone",
-            "CommandOrControl+Shift+Digit0",
-            Action::MessageAll,
-        ),
-        // The app's own actions are single function keys rather than
-        // three-finger chords. These are pressed occasionally, which is exactly
-        // when a chord is hardest: nobody rehearses Ctrl+Alt+K, and a shortcut
-        // you have to look up is one you will not use. F1 for the key list
-        // because every other program on the machine has taught that already.
-        ("Start or stop", "F9", Action::ToggleTransport),
-        ("Open the window", "F10", Action::ShowWindow),
-        ("Show shortcuts", "F1", Action::ShowShortcuts),
-    ] {
-        bind(app, bindings, listing, label, spec, action);
     }
 
     // Nine of each, which is as many as a row of number keys gives and more
@@ -331,6 +399,7 @@ pub fn register_all(
             &format!("Talk to PC {slot}"),
             &format!("CommandOrControl+Digit{slot}"),
             Action::TalkTo(slot),
+            None,
         );
         bind(
             app,
@@ -339,6 +408,7 @@ pub fn register_all(
             &format!("Message PC {slot}"),
             &format!("CommandOrControl+Shift+Digit{slot}"),
             Action::MessageTo(slot),
+            None,
         );
     }
 }

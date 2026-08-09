@@ -1,3 +1,6 @@
+import { useEffect, useState } from 'react';
+import { toSpec } from '../utils/shortcut';
+
 /// Every key and what it does — including the ones that failed.
 ///
 /// A list that only showed intentions would be worse than none, because it
@@ -18,6 +21,11 @@ const RANGE = /^(Talk to|Message) PC (\d+)$/;
 type Row = {
 	label: string;
 	keys: string;
+	/// Present when the row is a single rebindable key. A collapsed range has
+	/// none: nine keys generated from one pattern, and rebinding them
+	/// individually would turn a rule you can hold in your head into eighteen
+	/// facts you cannot.
+	id?: string;
 	/// How many of the keys behind this row failed to register. Kept as a count
 	/// rather than a flag: "two of nine" is a different problem from "all nine",
 	/// and collapsing the rows must not collapse that distinction away.
@@ -35,6 +43,7 @@ const collapse = (shortcuts: ShortcutInfo[]): Row[] => {
 			out.push({
 				label: s.label,
 				keys: s.keys,
+				id: s.id ?? undefined,
 				failed: s.registered ? 0 : 1,
 				total: 1
 			});
@@ -61,7 +70,29 @@ const collapse = (shortcuts: ShortcutInfo[]): Row[] => {
 	return out;
 };
 
-export const Shortcuts = ({ shortcuts }: ShortcutsProps) => {
+export const Shortcuts = ({ shortcuts, onSet }: ShortcutsProps) => {
+	// Which row is waiting for a key, if any. One at a time: two rows both
+	// listening would both take the same press.
+	const [capturing, setCapturing] = useState<string | null>(null);
+
+	useEffect(() => {
+		if (!capturing) return;
+		const onKey = (e: KeyboardEvent) => {
+			// Swallowed whether or not it becomes a shortcut, so the key being
+			// pressed to *set* a shortcut never also fires the old one.
+			e.preventDefault();
+			e.stopPropagation();
+			if (e.code === "Escape") return setCapturing(null);
+			const spec = toSpec(e);
+			if (!spec) return;
+			setCapturing(null);
+			onSet(capturing, spec);
+		};
+		// Capture phase, so this runs before anything else listening for keys.
+		window.addEventListener("keydown", onKey, true);
+		return () => window.removeEventListener("keydown", onKey, true);
+	}, [capturing, onSet]);
+
 	if (shortcuts.length === 0) return null;
 	const rows = collapse(shortcuts);
 	const failed = shortcuts.filter(s => !s.registered).length;
@@ -102,15 +133,34 @@ export const Shortcuts = ({ shortcuts }: ShortcutsProps) => {
 								</span>
 							)}
 						</span>
-						<kbd
-							className={`shrink-0 rounded border px-1.5 py-0.5 font-mono text-xs ${
-								r.failed === 0
-									? 'border-line text-muted'
-									: 'border-danger text-danger'
-							}`}
-						>
-							{r.keys}
-						</kbd>
+						{r.id ? (
+							<button
+								type='button'
+								onClick={() =>
+									setCapturing(capturing === r.id ? null : (r.id ?? null))
+								}
+								title='Click, then press the key you want'
+								className={`shrink-0 rounded border px-1.5 py-0.5 font-mono text-xs transition ${
+									capturing === r.id
+										? 'border-accent text-accent'
+										: r.failed === 0
+											? 'border-line text-muted hover:border-faint hover:text-ink'
+											: 'border-danger text-danger'
+								}`}
+							>
+								{capturing === r.id ? 'press a key…' : r.keys}
+							</button>
+						) : (
+							<kbd
+								className={`shrink-0 rounded border px-1.5 py-0.5 font-mono text-xs ${
+									r.failed === 0
+										? 'border-line text-muted'
+										: 'border-danger text-danger'
+								}`}
+							>
+								{r.keys}
+							</kbd>
+						)}
 					</div>
 				))}
 			</div>

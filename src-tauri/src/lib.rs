@@ -25,7 +25,7 @@ use tauri::{
 };
 use tauri_plugin_global_shortcut::ShortcutState;
 
-use keys::{reveal, Bindings, ShortcutList, Shortcuts};
+use keys::{reveal, Bindings, BindingsState, ShortcutList, Shortcuts};
 use state::{NetState, Ptt};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -96,6 +96,7 @@ pub fn run() {
             commands::set_label,
             commands::audio_devices,
             commands::set_audio_devices,
+            commands::set_shortcut,
             keys::shortcuts,
         ])
         .setup(move |app| {
@@ -129,6 +130,7 @@ pub fn run() {
             keys::register_all(&app.handle().clone(), &bindings, &listing, &cfg);
             app.manage(Ptt(ptt.clone()));
             app.manage(Shortcuts(listing.clone()));
+            app.manage(BindingsState(bindings.clone()));
 
             // Auto-start from the saved settings. A PC whose job is to listen
             // must come up receiving without anyone clicking anything: it may

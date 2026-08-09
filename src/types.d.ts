@@ -143,9 +143,15 @@ type ShortcutInfo = {
 	/// False when another application already owns the combination. The key
 	/// then does nothing at all, which is why this is shown rather than logged.
 	registered: boolean;
+	/// Set for keys that can be rebound; null for the generated per-PC ranges.
+	id: string | null;
 };
 
-type ShortcutsProps = { shortcuts: ShortcutInfo[] };
+type ShortcutsProps = {
+	shortcuts: ShortcutInfo[];
+	/// Change one key. An empty spec puts it back to its default.
+	onSet: (id: string, spec: string) => Promise<void>;
+};
 
 type NavProps = {
 	me: string;

@@ -9,7 +9,7 @@ use std::sync::atomic::Ordering;
 use tauri::State;
 
 use crate::state::{NetState, Ptt};
-use crate::{audio, config, discovery, net, session};
+use crate::{audio, config, discovery, keys, net, session};
 
 #[tauri::command]
 pub fn greet(name: &str) -> String {
@@ -73,6 +73,48 @@ pub fn audio_prefs(cfg: &config::Config) -> audio::Prefs {
         input: some(&cfg.input_device),
         output: some(&cfg.output_device),
     }
+}
+
+/// Change one key, or clear it back to its default with an empty string.
+///
+/// The spec is Tauri's own format — "CommandOrControl+Shift+KeyK", "F8" — built
+/// by the window from the key that was actually pressed, so nobody has to know
+/// that syntax exists.
+///
+/// Saved only after the registration is attempted, and the result is reported:
+/// a combination another application already owns registers as nothing at all,
+/// and writing it to disk as though it had worked is how a key that does
+/// nothing becomes permanent.
+#[tauri::command]
+pub fn set_shortcut(
+    app: tauri::AppHandle,
+    bindings: State<keys::BindingsState>,
+    shortcuts: State<keys::Shortcuts>,
+    id: String,
+    spec: String,
+) -> Result<Vec<keys::ShortcutInfo>, String> {
+    if !keys::EDITABLE.iter().any(|(k, _, _)| *k == id) {
+        return Err(format!("{id} is not a key that can be changed"));
+    }
+
+    let mut cfg = config::load(&app).unwrap_or_default();
+    let spec = spec.trim().to_string();
+    if spec.is_empty() {
+        cfg.shortcuts.remove(&id);
+    } else {
+        cfg.shortcuts.insert(id.clone(), spec);
+    }
+    // Kept in step, or an older build reading this config would go back to
+    // whatever it said before.
+    if id == "talk" {
+        cfg.talk_shortcut = keys::spec_for(&cfg, "talk");
+    }
+
+    keys::rebind(&app, &bindings.inner().0, &shortcuts.inner().0, &cfg);
+    config::save(&app, &cfg).map_err(|e| format!("{e:#}"))?;
+
+    let l = shortcuts.inner().0.lock().map_err(|e| e.to_string())?;
+    Ok(l.clone())
 }
 
 /// Every microphone and every pair of speakers the machine can offer.

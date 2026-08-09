@@ -43,6 +43,7 @@ const App = () => {
 	const devices = useDevices(setError);
 	const {
 		shortcuts,
+		setShortcut,
 		showShortcuts,
 		setShowShortcuts,
 		showAddPc,
@@ -142,7 +143,7 @@ const App = () => {
 					onClose: () => setShowShortcuts(false)
 				}}
 			>
-				<Shortcuts {...{ shortcuts }} />
+				<Shortcuts {...{ shortcuts, onSet: setShortcut }} />
 			</Modal>
 
 			{/* Adding only. Managing what you have added is a different job
