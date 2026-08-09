@@ -1,3 +1,5 @@
+mod audio;
+
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -41,6 +43,13 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
+
+            match audio::start() {
+                Ok(handle) => {
+                    app.manage(handle);
+                }
+                Err(e) => eprintln!("[audio] failed to start: {e:#}"),
+            }
 
             Ok(())
         })
