@@ -1,4 +1,5 @@
 mod audio;
+mod net;
 
 use tauri::{
     menu::{Menu, MenuItem},
@@ -49,6 +50,19 @@ pub fn run() {
                     app.manage(handle);
                 }
                 Err(e) => eprintln!("[audio] failed to start: {e:#}"),
+            }
+
+            let port: u16 = std::env::var("ZC_PORT")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(9001);
+            match std::env::var("ZC_PEER") {
+                Ok(peer) => {
+                    if let Err(e) = net::start(port, peer) {
+                        eprintln!("[net] failed to start: {e:#}");
+                    }
+                }
+                Err(_) => eprintln!("[net] ZC_PEER unset, transport disabled"),
             }
 
             Ok(())
