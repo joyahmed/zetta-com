@@ -76,6 +76,39 @@ fn net_peers(state: State<NetState>) -> Result<Vec<discovery::Peer>, String> {
         .unwrap_or_default())
 }
 
+/// Send a line of text to everyone live.
+///
+/// A separate command from anything to do with voice, on purpose: in v1 one
+/// keypress both pinged somebody and opened the mic to them, and when the ping
+/// arrived and the voice did not there was no way to tell which half had
+/// failed. Same socket underneath, separate action on top.
+#[tauri::command]
+fn send_text(state: State<NetState>, text: String) -> Result<(), String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Ok(());
+    }
+    match state.0.lock().map_err(|e| e.to_string())?.as_ref() {
+        Some(s) => {
+            s.send_text(text);
+            Ok(())
+        }
+        None => Err("Not running — press Start first.".into()),
+    }
+}
+
+/// The message log, newest last. Polled with everything else.
+#[tauri::command]
+fn messages(state: State<NetState>) -> Result<Vec<net::Message>, String> {
+    Ok(state
+        .0
+        .lock()
+        .map_err(|e| e.to_string())?
+        .as_ref()
+        .map(|s| s.messages())
+        .unwrap_or_default())
+}
+
 /// Whether the push-to-talk key is down right now. Polled with everything else
 /// rather than pushed as an event: the UI already asks four times a second, and
 /// a second channel would be one more thing to keep in agreement with reality.
@@ -147,7 +180,7 @@ pub fn run() {
         )
         .invoke_handler(tauri::generate_handler![
             greet, net_start, net_stop, net_stats, net_peers, local_name, config_get,
-            ptt_held
+            ptt_held, send_text, messages
         ])
         .setup(move |app| {
             let show = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;

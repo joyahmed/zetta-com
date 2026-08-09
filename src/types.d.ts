@@ -26,6 +26,23 @@ type Peer = {
 
 type TalkBarProps = { held: boolean; key_: string };
 
+type Message = {
+	id: number;
+	/// A name once the session has matched the address to the roster; the raw
+	/// address when it could not. Empty for your own lines.
+	from: string;
+	text: string;
+	mine: boolean;
+	/// Unix milliseconds.
+	at: number;
+};
+
+type MessagesProps = {
+	messages: Message[];
+	onSend: (text: string) => void;
+	disabled: boolean;
+};
+
 type FieldProps = {
 	label: string;
 	value: string;

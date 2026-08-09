@@ -8,7 +8,7 @@
 //! is the socket, the ports, the firewall, and that a structured header
 //! survives the trip with its sequence intact.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 use std::sync::mpsc::SyncSender;
 use std::sync::Mutex;
@@ -25,7 +25,12 @@ use serde::Serialize;
 /// packets from being decoded as noise by this one.
 pub const VER: u8 = 1;
 pub const KIND_AUDIO: u8 = 0;
+pub const KIND_TEXT: u8 = 1;
 pub const KIND_HEARTBEAT: u8 = 2;
+
+/// How many messages to keep. A log nobody can scroll forever is a log that
+/// cannot grow without bound while the app sits in the tray for a week.
+const MESSAGE_LIMIT: usize = 200;
 pub const HEADER_LEN: usize = 8;
 
 /// How often to say we are still here. Frequent enough that going quiet is
@@ -108,6 +113,21 @@ pub struct Stats {
     pub last_seq: u16,
 }
 
+/// One line of the log. `from` is an address here; the session turns it into a
+/// name, because `net` has no idea who anybody is.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Message {
+    pub id: u64,
+    pub from: String,
+    pub text: String,
+    /// Sent by us rather than received. The log shows both, so that pressing a
+    /// key and nothing arriving is distinguishable from never having pressed it.
+    pub mine: bool,
+    /// Unix milliseconds, stamped on arrival.
+    pub at: u64,
+}
+
 #[derive(Default)]
 struct Targets {
     known: Vec<SocketAddr>,
@@ -148,6 +168,8 @@ pub struct Handle {
     /// talking. A field would have said the same thing less reliably, since it
     /// could disagree with whether packets were actually arriving.
     last_audio: Arc<Mutex<HashMap<SocketAddr, Instant>>>,
+    messages: Arc<Mutex<VecDeque<Message>>>,
+    next_message_id: Arc<AtomicU64>,
 }
 
 impl Drop for Handle {
@@ -226,6 +248,78 @@ impl Handle {
         stamped_within(&self.last_audio, addr, TALKING_TIMEOUT)
     }
 
+    /// Send a line of text to everyone live.
+    ///
+    /// Its own path and its own call, deliberately. In v1 one keypress both
+    /// pinged somebody and opened the mic to them, and when the ping arrived
+    /// and the voice did not there was no way to tell which half had failed —
+    /// they had resolved the same name differently. Same socket, same header,
+    /// separate action.
+    pub fn send_text(&self, text: &str) {
+        let bytes = text.as_bytes();
+        if bytes.is_empty() || bytes.len() > MAX_PAYLOAD {
+            return;
+        }
+        let targets = {
+            let t = match self.targets.lock() {
+                Ok(t) => t,
+                Err(e) => e.into_inner(),
+            };
+            t.live.clone()
+        };
+
+        let mut buf = [0u8; HEADER_LEN + MAX_PAYLOAD];
+        Header {
+            ver: VER,
+            kind: KIND_TEXT,
+            // Text does not ride the audio sequence: it is not a stream, and
+            // advancing that counter would punch holes in the reorder window
+            // at the far end.
+            seq: 0,
+            ts: 0,
+        }
+        .write(&mut buf);
+        buf[HEADER_LEN..HEADER_LEN + bytes.len()].copy_from_slice(bytes);
+        let packet = &buf[..HEADER_LEN + bytes.len()];
+
+        for addr in targets {
+            if let Err(e) = self.socket.send_to(packet, addr) {
+                eprintln!("[net] text to {addr} failed: {e}");
+            }
+        }
+
+        // Logged whether or not anybody was listening. A message that reached
+        // nobody still happened, and hiding it would make an empty roster look
+        // like a broken keyboard.
+        self.push_message(String::new(), text.to_string(), true);
+    }
+
+    fn push_message(&self, from: String, text: String, mine: bool) {
+        let msg = Message {
+            id: self.next_message_id.fetch_add(1, Ordering::Relaxed),
+            from,
+            text,
+            mine,
+            at: unix_millis(),
+        };
+        let mut log = match self.messages.lock() {
+            Ok(m) => m,
+            Err(e) => e.into_inner(),
+        };
+        if log.len() >= MESSAGE_LIMIT {
+            log.pop_front();
+        }
+        log.push_back(msg);
+    }
+
+    pub fn messages(&self) -> Vec<Message> {
+        let log = match self.messages.lock() {
+            Ok(m) => m,
+            Err(e) => e.into_inner(),
+        };
+        log.iter().cloned().collect()
+    }
+
     pub fn stats(&self) -> Stats {
         Stats {
             port: self.port,
@@ -237,6 +331,16 @@ impl Handle {
             last_seq: self.counters.last_seq.load(Ordering::Relaxed) as u16,
         }
     }
+}
+
+/// Wall-clock, for display only. `Instant` is used everywhere timing matters,
+/// because it cannot jump backwards when the clock is corrected; this is the one
+/// place a human has to read the value.
+fn unix_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 /// Shared by presence and talking: both ask "was this address stamped recently".
@@ -405,6 +509,8 @@ pub fn start(
     let heard: Arc<Mutex<HashMap<SocketAddr, Instant>>> = Arc::new(Mutex::new(HashMap::new()));
     let last_audio: Arc<Mutex<HashMap<SocketAddr, Instant>>> =
         Arc::new(Mutex::new(HashMap::new()));
+    let messages: Arc<Mutex<VecDeque<Message>>> = Arc::new(Mutex::new(VecDeque::new()));
+    let message_id = Arc::new(AtomicU64::new(1));
 
     // Say we are still here, whether or not anyone is talking. Without this a
     // silent peer is indistinguishable from a switched-off one, which is the
@@ -459,6 +565,10 @@ pub fn start(
     let rx_counters = counters.clone();
     let rx_heard = heard.clone();
     let rx_last_audio = last_audio.clone();
+    let rx_messages = messages.clone();
+    // Shared with the Handle rather than a second counter, so sent and received
+    // lines interleave in the order they actually happened.
+    let rx_message_id = message_id.clone();
     thread::Builder::new().name("net-rx".into()).spawn(move || {
         let mut buf = [0u8; 2048];
         // One reorder window per source. Sequence numbers are per-sender, so a
@@ -491,6 +601,29 @@ pub fn start(
             }
 
             rx_counters.rx.fetch_add(1, Ordering::Relaxed);
+
+            if h.kind == KIND_TEXT && len > HEADER_LEN {
+                // Lossy: a message with a bad byte in it is still worth
+                // showing, and refusing to display anything is a worse
+                // failure than a replacement character.
+                let text = String::from_utf8_lossy(&buf[HEADER_LEN..len]).to_string();
+                let msg = Message {
+                    id: rx_message_id.fetch_add(1, Ordering::Relaxed),
+                    from: from.to_string(),
+                    text,
+                    mine: false,
+                    at: unix_millis(),
+                };
+                let mut log = match rx_messages.lock() {
+                    Ok(m) => m,
+                    Err(e) => e.into_inner(),
+                };
+                if log.len() >= MESSAGE_LIMIT {
+                    log.pop_front();
+                }
+                log.push_back(msg);
+                continue;
+            }
 
             if h.kind == KIND_AUDIO && len > HEADER_LEN {
                 {
@@ -543,5 +676,7 @@ pub fn start(
         targets,
         heard,
         last_audio,
+        messages,
+        next_message_id: message_id,
     })
 }

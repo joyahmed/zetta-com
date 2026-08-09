@@ -46,6 +46,38 @@ impl Session {
         self.net.stats()
     }
 
+    pub fn send_text(&self, text: &str) {
+        self.net.send_text(text);
+    }
+
+    /// The log, with addresses replaced by names. `net` stores who sent what as
+    /// an address because it has no idea who anybody is; putting a name on it
+    /// is the session's job, since it is the only layer that holds both the
+    /// socket and the roster.
+    pub fn messages(&self) -> Vec<net::Message> {
+        let names: Vec<(String, String)> = self
+            .discovery
+            .as_ref()
+            .map(|d| {
+                d.peers()
+                    .into_iter()
+                    .map(|p| (p.addr.to_string(), p.name))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let mut msgs = self.net.messages();
+        for m in &mut msgs {
+            if m.mine {
+                continue;
+            }
+            if let Some((_, name)) = names.iter().find(|(addr, _)| *addr == m.from) {
+                m.from = name.clone();
+            }
+        }
+        msgs
+    }
+
     /// Empty when discovery could not start — which is a normal state on a
     /// network that filters mDNS, not a failure of the session.
     ///

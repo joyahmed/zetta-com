@@ -2,9 +2,11 @@ import { Advanced } from './components/Advanced';
 import { Alert } from './components/Alert';
 import { Diagnostics } from './components/Diagnostics';
 import { Disclosure } from './components/Disclosure';
+import { Messages } from './components/Messages';
 import { Roster } from './components/Roster';
 import { TalkBar } from './components/TalkBar';
 import { useLocalName } from './hooks/useLocalName';
+import { useMessages } from './hooks/useMessages';
 import { usePtt } from './hooks/usePtt';
 import { useTransport } from './hooks/useTransport';
 
@@ -23,6 +25,7 @@ const App = () => {
 		stop,
 		running
 	} = useTransport();
+	const { messages, send } = useMessages(running);
 
 	return (
 		<main className='min-h-screen bg-slate-50 px-6 py-8 text-slate-900 dark:bg-slate-950 dark:text-slate-100'>
@@ -58,6 +61,12 @@ const App = () => {
 					running={running}
 					selected={peer}
 					onSelect={setPeer}
+				/>
+
+				<Messages
+					messages={messages}
+					onSend={send}
+					disabled={!running}
 				/>
 
 				<Disclosure label='Advanced'>
