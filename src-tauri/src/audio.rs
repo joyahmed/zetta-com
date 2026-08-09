@@ -725,6 +725,34 @@ fn device_name(device: &Device) -> String {
 /// nothing matches, because a device that cannot be used is worth naming — a
 /// wrong-rate stream would otherwise run happily and just sound wrong.
 fn pick(device: &Device, input: bool) -> Result<SupportedStreamConfig> {
+    let which = if input { "input" } else { "output" };
+
+    // The device's *default* config is its shared-mode mix format, and WASAPI
+    // shared mode will accept nothing else — not another rate and not another
+    // channel count. Asking for mono on a stereo device fails with "stream
+    // configuration is not supported in shared mode", which reads like a codec
+    // problem and is really a request Windows was never going to grant.
+    //
+    // So this is tried first, and the range search below is only a fallback for
+    // hosts that do not work this way.
+    let default = if input {
+        device.default_input_config()
+    } else {
+        device.default_output_config()
+    };
+    if let Ok(cfg) = default {
+        if OPUS_RATES.contains(&cfg.sample_rate()) && USABLE_FORMATS.contains(&cfg.sample_format())
+        {
+            return Ok(cfg);
+        }
+        eprintln!(
+            "[audio] {which} default is {}Hz {:?} {}ch, which Opus cannot take directly — looking for another",
+            cfg.sample_rate(),
+            cfg.sample_format(),
+            cfg.channels()
+        );
+    }
+
     let ranges: Vec<_> = if input {
         device.supported_input_configs()?.collect()
     } else {
@@ -763,8 +791,7 @@ fn pick(device: &Device, input: bool) -> Result<SupportedStreamConfig> {
         })
         .collect();
     Err(anyhow!(
-        "{} device offers no usable config (needs F32 or I16 at 48/24/16/12/8 kHz); it offers: {}",
-        if input { "input" } else { "output" },
+        "{which} device offers no usable config (needs F32 or I16 at 48/24/16/12/8 kHz); it offers: {}",
         offered.join(", ")
     ))
 }
