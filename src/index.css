@@ -74,6 +74,30 @@
    Both syntaxes are needed — `scrollbar-width` is what Firefox implements, and
    WebKit (the macOS and Linux webviews) still only understands the
    pseudo-elements. */
+/* The window is undecorated, so its corners are ours to draw. Windows 11 rounds
+   an undecorated window for you and macOS does not — it came out square there,
+   which is conspicuous next to every other window on the desktop.
+
+   The window itself is transparent and the rounding lives here, on the root, so
+   both platforms get the same shape from the same rule rather than one of them
+   inheriting a shape from the OS.
+
+   `html`/`body` must not paint: anything they draw is a square behind the
+   rounded corner, which is exactly the artefact this removes. */
+@layer base {
+	html,
+	body,
+	#root {
+		height: 100%;
+		background: transparent;
+	}
+
+	#root > * {
+		border-radius: 12px;
+		overflow: hidden;
+	}
+}
+
 /* Inside `@layer base` on purpose. Unlayered CSS beats *every* layered rule
    regardless of specificity, so writing these at the top level put them above
    Tailwind's utilities layer — and `.no-scrollbar` lost to a `*` selector.

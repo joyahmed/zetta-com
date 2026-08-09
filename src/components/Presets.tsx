@@ -10,7 +10,7 @@ export const Presets = ({ presets, onSend, disabled }: PresetsProps) => {
 	if (presets.length === 0) return null;
 
 	return (
-		<div className='no-scrollbar flex gap-2 overflow-x-auto [mask-image:linear-gradient(to_right,transparent_0,black_8px,black_calc(100%-20px),transparent_100%)]'>
+		<div className='no-scrollbar flex gap-2 overflow-x-auto'>
 			{presets.map(p => (
 				<button
 					key={p.label}

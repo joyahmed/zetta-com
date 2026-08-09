@@ -10,6 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "title": "Zetta Com",
@@ -20,7 +21,8 @@
         "maxWidth": 560,
         "maxHeight": 1400,
         "maximizable": false,
-        "decorations": false
+        "decorations": false,
+        "transparent": true
       }
     ],
     "security": {

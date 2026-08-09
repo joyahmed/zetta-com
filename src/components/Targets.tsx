@@ -68,13 +68,14 @@ export const Targets = ({
 				</span>
 			</div>
 
-			{/* Contained, not full-bleed, and faded at the ends rather than cut.
-			    Running the strip to the window edge sliced whichever chip
-			    landed there clean in half against the border, which reads as a
-			    broken layout rather than as "there is more to the right". The
-			    mask does the same job honestly: content thins out instead of
-			    being guillotined. */}
-			<div className='no-scrollbar flex gap-2 overflow-x-auto pb-0.5 [mask-image:linear-gradient(to_right,transparent_0,black_8px,black_calc(100%-20px),transparent_100%)]'>
+			{/* Contained rather than full-bleed: running the strip to the window
+			    edge sliced whichever chip landed there clean in half against
+			    the border.
+			    No fade mask. There was one, and it dimmed the leading edge of
+			    the first chip — "Everyone" arrived half-faded before anything
+			    had been scrolled. A partly visible chip at the right is already
+			    understood as "there is more", and needs no help. */}
+			<div className='no-scrollbar flex gap-2 overflow-x-auto pb-0.5'>
 				{/* Everyone is first and always present: it is the default the
 				    app returns to, not one option among the machines. */}
 				<Chip
