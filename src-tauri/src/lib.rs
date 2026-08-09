@@ -363,14 +363,14 @@ pub fn run() {
             app.manage(Ptt(ptt.clone()));
 
             let session = match config::load(app.handle()) {
-                Some(cfg) => match session::start(
-                    config::port_override().unwrap_or(cfg.port),
-                    &cfg.peer,
-                    &cfg.manual,
-                    ptt.clone(),
-                ) {
+                Some(cfg) => {
+                    // Resolved once and reported, rather than logging the saved
+                    // value while binding the overridden one — a log that
+                    // misreports which port is in use is worse than no log.
+                    let port = config::port_override().unwrap_or(cfg.port);
+                    match session::start(port, &cfg.peer, &cfg.manual, ptt.clone()) {
                     Ok(s) => {
-                        eprintln!("[net] auto-started on {} -> {}", cfg.port, cfg.peer);
+                        eprintln!("[net] auto-started on {port} -> {}", cfg.peer);
                         Some(s)
                     }
                     Err(e) => {
@@ -379,7 +379,8 @@ pub fn run() {
                         eprintln!("[net] auto-start failed: {e:#}");
                         None
                     }
-                },
+                    }
+                }
                 None => None,
             };
             app.manage(NetState(Mutex::new(session)));
