@@ -11,6 +11,8 @@ mod commands;
 mod config;
 mod discovery;
 mod keys;
+#[cfg(target_os = "windows")]
+mod log;
 mod net;
 mod room;
 mod session;
@@ -68,9 +70,25 @@ pub fn run() {
     // Created before the builder because both the shortcut handler and the
     // session need them, and the handler is installed while the app is being
     // configured rather than after.
-    // Before anything else: Windows resolves a toast's name and icon from the
-    // process AppUserModelID, and without one the notification library falls
-    // back to PowerShell's — which is why every toast was captioned "Windows
+    // Before anything else, and before anything that can fail: a release build
+    // has no stderr, so until this runs every diagnostic in the app is written
+    // to nowhere. See `log`.
+    #[cfg(target_os = "windows")]
+    {
+        let where_to = log::to_file();
+        eprintln!(
+            "--- Zetta Com {} starting, pid {} ---",
+            env!("CARGO_PKG_VERSION"),
+            std::process::id()
+        );
+        if let Some(path) = where_to {
+            eprintln!("[log] {}", path.display());
+        }
+    }
+
+    // Windows resolves a toast's name and icon from the process
+    // AppUserModelID, and without one the notification library falls back to
+    // PowerShell's — which is why every toast was captioned "Windows
     // PowerShell".
     #[cfg(target_os = "windows")]
     winshell::register("com.joy.zetta-com", "Zetta Com");

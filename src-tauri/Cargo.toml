@@ -60,6 +60,6 @@ tauri-plugin-autostart = "2.5.1"
 # then implements a COM interface from one version against a trait from the
 # other and will not compile. Naming it here keeps both halves on 0.61.
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Com", "Win32_UI_Shell", "Win32_UI_Shell_PropertiesSystem", "Win32_System_Com_StructuredStorage"] }
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Com", "Win32_System_Console", "Win32_UI_Shell", "Win32_UI_Shell_PropertiesSystem", "Win32_System_Com_StructuredStorage"] }
 windows-core = "0.61"
 

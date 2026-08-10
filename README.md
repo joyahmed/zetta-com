@@ -237,6 +237,11 @@ sit in, your rebound keys, your presets and the room passphrase. There is no
 account, no sync, no analytics, and no call to anything outside your own
 network. Delete that file and the app is back to a first start.
 
+On Windows, `zetta-com.log` sits beside it. It is the app's own account of which
+microphone and speakers it chose, what it bound to, and who it heard from — the
+first place to look when somebody cannot be heard. It stays on the machine like
+everything else, and it is dropped and started again once it passes a megabyte.
+
 It is kept on the Rust side rather than in the webview because a machine whose
 only job is to listen has to come up receiving before any window has loaded.
 That is also why the passphrase is in plain text there — see

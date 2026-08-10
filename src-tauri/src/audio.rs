@@ -56,6 +56,20 @@ const RETRY_DELAY: Duration = Duration::from_millis(700);
 /// or a driver reloading can stall briefly and recover on its own, and a
 /// rebuild is an audible interruption.
 const DEAD_STREAM_POLLS: u32 = 3;
+/// How many rebuilds a dead capture stream gets at the fast cadence above
+/// before the retry slows down.
+///
+/// It never stops retrying, because stopping is the bug this exists to remove:
+/// a microphone that cannot be recovered leaves you unable to talk for as long
+/// as the app runs. But a rebuild interrupts playback for about a second, so
+/// retrying every four seconds forever would trade not being able to talk for
+/// not being able to listen either. Two fast attempts cover the case this was
+/// written for — endpoints that are not ready yet at login or straight after an
+/// install — and anything still dead after those is not in a hurry.
+const CAPTURE_REBUILDS: u32 = 2;
+/// The slow cadence: a second of interrupted playback a minute, against a
+/// microphone that has already failed to come back twice.
+const CAPTURE_BACKOFF_POLLS: u32 = 60;
 
 /// Which devices to use, by name, or the system default when `None`.
 ///
@@ -140,6 +154,11 @@ struct Stats {
     /// Samples the capture callback threw away because ring A was full: the
     /// encoder is not keeping up.
     in_drops: AtomicU64,
+    /// Every capture callback, full or silent. `out_calls` for the microphone,
+    /// and the only counter that can tell a dead capture stream from a quiet
+    /// room: `frames` and `in_drops` below only advance while the talk key is
+    /// held, so with the key up they read zero either way.
+    in_calls: AtomicU64,
     /// Frames encoded.
     frames: AtomicU64,
     /// Output callbacks that produced silence because ring B was short.
@@ -212,6 +231,10 @@ pub fn start(transmit: Arc<AtomicBool>, prefs: Prefs) -> Result<Pipeline> {
         .name("audio".into())
         .spawn(move || {
             let mut first = true;
+            // Outside the loop, because it counts rebuilds *across* generations
+            // — the whole question it answers is whether the last rebuild fixed
+            // anything.
+            let mut cap_attempts = 0u32;
             while !thread_stop.load(Ordering::Relaxed) {
                 // Signals this generation to stop, independently of the whole
                 // pipeline stopping.
@@ -255,6 +278,9 @@ pub fn start(transmit: Arc<AtomicBool>, prefs: Prefs) -> Result<Pipeline> {
                 let has_output = streams._output.is_some();
                 let mut last_pulse = streams.stats.out_calls.load(Ordering::Relaxed);
                 let mut quiet = 0u32;
+                let has_input = streams._input.is_some();
+                let mut last_in = streams.stats.in_calls.load(Ordering::Relaxed);
+                let mut in_quiet = 0u32;
 
                 while !thread_stop.load(Ordering::Relaxed)
                     && !rebuild.load(Ordering::Relaxed)
@@ -293,6 +319,46 @@ pub fn start(transmit: Arc<AtomicBool>, prefs: Prefs) -> Result<Pipeline> {
                         } else {
                             quiet = 0;
                             last_pulse = pulse;
+                        }
+                    }
+
+                    // The same test, for the microphone — and this is the one
+                    // that was missing. A capture stream can open, report no
+                    // error, and never be called, which is what a machine that
+                    // started before its audio endpoints were ready looks like
+                    // from in here. Nothing above notices: the device name has
+                    // not changed, playback is fine, and the only capture
+                    // counters move solely while the talk key is held. So the
+                    // app went on believing it had a microphone, everyone else
+                    // heard silence when the key went down, and the state
+                    // survived until the process did — which is exactly why
+                    // logging out and back in looked like the remedy.
+                    if has_input {
+                        // Fast while the cause still looks like a device that
+                        // has not finished waking up, slow once it does not.
+                        let patience = if cap_attempts < CAPTURE_REBUILDS {
+                            DEAD_STREAM_POLLS
+                        } else {
+                            CAPTURE_BACKOFF_POLLS
+                        };
+                        let pulse = streams.stats.in_calls.load(Ordering::Relaxed);
+                        if pulse == last_in {
+                            in_quiet += 1;
+                            if in_quiet >= patience {
+                                cap_attempts += 1;
+                                eprintln!(
+                                    "[audio] capture has not been called for {patience}s, rebuilding (attempt {cap_attempts})"
+                                );
+                                break;
+                            }
+                        } else {
+                            in_quiet = 0;
+                            last_in = pulse;
+                            // Heard from, so the attempts above count a run of
+                            // consecutive failures rather than the lifetime of
+                            // the app: the next time this happens it gets the
+                            // fast cadence again.
+                            cap_attempts = 0;
                         }
                     }
                 }
@@ -396,14 +462,22 @@ fn build(
         .spawn(move || {
             let stats = report_stats;
             let (mut p_drops, mut p_frames, mut p_under, mut p_primes) = (0u64, 0u64, 0u64, 0u64);
+            let mut p_mic = 0u64;
             while !report_stop.load(Ordering::Relaxed) {
                 thread::sleep(Duration::from_secs(1));
                 let drops = stats.in_drops.load(Ordering::Relaxed);
                 let frames = stats.frames.load(Ordering::Relaxed);
                 let under = stats.underruns.load(Ordering::Relaxed);
                 let primes = stats.primes.load(Ordering::Relaxed);
+                // `mic` is capture callbacks in the last second, and it is the
+                // first number to read when somebody cannot be heard: it is the
+                // microphone's pulse, and unlike `frames` it does not depend on
+                // anyone holding the talk key. Zero here with a device listed
+                // above means the stream is open and dead.
+                let mic = stats.in_calls.load(Ordering::Relaxed);
                 eprintln!(
-                    "[audio] 1s frames {} drops {} underruns {} reprimes {} ringA {} ringB {}",
+                    "[audio] 1s mic {} frames {} drops {} underruns {} reprimes {} ringA {} ringB {}",
+                    mic - p_mic,
                     frames - p_frames,
                     drops - p_drops,
                     under - p_under,
@@ -412,6 +486,7 @@ fn build(
                     stats.b_occ.load(Ordering::Relaxed),
                 );
                 (p_drops, p_frames, p_under, p_primes) = (drops, frames, under, primes);
+                p_mic = mic;
             }
         })?;
 
@@ -492,6 +567,7 @@ fn build_capture(
         SampleFormat::F32 => device.build_input_stream(
             stream_cfg.clone(),
             move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                st.in_calls.fetch_add(1, Ordering::Relaxed);
                 for f in data.chunks_exact(ch) {
                     let sum: f32 = f.iter().sum();
                     let v = (sum / ch as f32).clamp(-1.0, 1.0);
@@ -508,6 +584,7 @@ fn build_capture(
         SampleFormat::I16 => device.build_input_stream(
             stream_cfg.clone(),
             move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                st.in_calls.fetch_add(1, Ordering::Relaxed);
                 for f in data.chunks_exact(ch) {
                     let sum: i32 = f.iter().map(|s| *s as i32).sum();
                     if prod.try_push((sum / ch as i32) as i16).is_err() {
