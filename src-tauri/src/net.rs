@@ -8,7 +8,7 @@
 //! is the socket, the ports, the firewall, and that a structured header
 //! survives the trip with its sequence intact.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 use std::sync::mpsc::SyncSender;
 use std::sync::Mutex;
@@ -43,6 +43,18 @@ pub const VER: u8 = 2;
 pub const KIND_AUDIO: u8 = 0;
 pub const KIND_TEXT: u8 = 1;
 pub const KIND_HEARTBEAT: u8 = 2;
+/// Which build this machine is running.
+///
+/// A kind of its own rather than extra bytes on the heartbeat, and that is the
+/// whole design. Machines already running 1.2.0 read the entire heartbeat
+/// payload as the sender's name, so appending anything to it would put
+/// `JOYR9<NUL>1.3.0` in their roster — and bumping `VER` to change the format
+/// properly is worse still: an older build rejects every packet from a newer
+/// one, which is exactly how the Mac on 1.0.0 went silent with nothing anywhere
+/// saying why. An unknown *kind* costs an old build nothing. It parses the
+/// header, counts the packet as a sign of life, matches none of its cases, and
+/// carries on.
+pub const KIND_VERSION: u8 = 3;
 
 /// How many messages to keep. A log nobody can scroll forever is a log that
 /// cannot grow without bound while the app sits in the tray for a week.
@@ -52,6 +64,8 @@ pub const HEADER_LEN: usize = 8;
 /// How often to say we are still here. Frequent enough that going quiet is
 /// noticed while you are still looking at the screen, rare enough to be free.
 const HEARTBEAT_EVERY: Duration = Duration::from_secs(2);
+/// Heartbeats between one version packet and the next — thirty seconds.
+const VERSION_EVERY: u32 = 15;
 /// Silence longer than this and a peer is treated as gone. Three missed
 /// heartbeats, so one dropped datagram never greys anybody out.
 pub const HEARD_TIMEOUT: Duration = Duration::from_secs(7);
@@ -192,6 +206,11 @@ pub struct Handle {
     /// already goes to everyone; carrying the name in it costs a few bytes
     /// every two seconds and means every peer has a name however it was found.
     names: Arc<Mutex<HashMap<SocketAddr, String>>>,
+    /// The build each machine says it is running. Kept beside the names for the
+    /// same reason and filled the same way, from the socket rather than from
+    /// mDNS — a machine that is discovered but not reachable has told us
+    /// nothing, and claiming a version for it would be inventing one.
+    versions: Arc<Mutex<HashMap<SocketAddr, String>>>,
     /// When audio — as opposed to a heartbeat — last arrived from each address.
     ///
     /// This is how the UI knows who is speaking, and it needs no flag in the
@@ -352,6 +371,15 @@ impl Handle {
     /// The name a machine calls itself, if it has told us.
     pub fn name_of(&self, addr: SocketAddr) -> Option<String> {
         let map = match self.names.lock() {
+            Ok(m) => m,
+            Err(e) => e.into_inner(),
+        };
+        map.get(&addr).cloned()
+    }
+
+    /// The build a machine says it is running, if it has said.
+    pub fn version_of(&self, addr: SocketAddr) -> Option<String> {
+        let map = match self.versions.lock() {
             Ok(m) => m,
             Err(e) => e.into_inner(),
         };
@@ -645,6 +673,7 @@ pub fn start(
     let last_audio: Arc<Mutex<HashMap<SocketAddr, Instant>>> =
         Arc::new(Mutex::new(HashMap::new()));
     let names: Arc<Mutex<HashMap<SocketAddr, String>>> = Arc::new(Mutex::new(HashMap::new()));
+    let versions: Arc<Mutex<HashMap<SocketAddr, String>>> = Arc::new(Mutex::new(HashMap::new()));
     let messages: Arc<Mutex<VecDeque<Message>>> = Arc::new(Mutex::new(VecDeque::new()));
     let message_id = Arc::new(AtomicU64::new(1));
 
@@ -689,6 +718,29 @@ pub fn start(
                 return;
             };
 
+            // Which build this is, sealed and built once beside the heartbeat.
+            // Same shape, own kind — see KIND_VERSION for why it is not simply
+            // appended to the payload above.
+            let version = env!("CARGO_PKG_VERSION").as_bytes();
+            let mut vbuf = [0u8; HEADER_LEN + MAX_PAYLOAD];
+            Header {
+                ver: VER,
+                kind: KIND_VERSION,
+                seq: 0,
+                ts: 0,
+            }
+            .write(&mut vbuf);
+            let vn = version.len().min(MAX_PAYLOAD);
+            let version = frame(hb_room.as_deref(), &vbuf[..HEADER_LEN], &version[..vn]);
+
+            let mut tick = 0u32;
+            // Who has already been told. Without this the first version packet
+            // goes out on tick zero, when the roster is still empty and nobody
+            // is listening, and the next is half a minute later — so every
+            // machine spent its first thirty seconds unable to say what it was
+            // running, which is exactly the window somebody watches after an
+            // update.
+            let mut told: HashSet<SocketAddr> = HashSet::new();
             while !hb_stop.load(Ordering::Relaxed) {
                 // To everyone known, not only everyone live. Two instances
                 // that have never heard each other would otherwise each wait
@@ -704,7 +756,27 @@ pub fn start(
                     if let Err(e) = hb_sock.send_to(&buf, addr) {
                         eprintln!("[net] heartbeat to {addr} failed: {e}");
                     }
+                    // Immediately for an address never sent to before, and once
+                    // every VERSION_EVERY heartbeats after that. A version
+                    // string cannot change while the process is alive, so
+                    // repeating it at the heartbeat's own rate would be sending
+                    // a constant every two seconds forever — but a machine that
+                    // has just appeared should not have to wait for the next
+                    // round to be told, and the roster it is missing from is
+                    // the one somebody is looking at.
+                    //
+                    // Evaluated before the `||`, not after it: as the second
+                    // operand it would be skipped on exactly the ticks that do
+                    // send, so the address would never be recorded as told and
+                    // would take a packet every single tick.
+                    let first = told.insert(addr);
+                    if first || tick % VERSION_EVERY == 0 {
+                        if let Some(v) = &version {
+                            let _ = hb_sock.send_to(v, addr);
+                        }
+                    }
                 }
+                tick = tick.wrapping_add(1);
                 thread::sleep(HEARTBEAT_EVERY);
             }
         })?;
@@ -714,6 +786,7 @@ pub fn start(
     let rx_heard = heard.clone();
     let rx_last_audio = last_audio.clone();
     let rx_names = names.clone();
+    let rx_versions = versions.clone();
     let rx_messages = messages.clone();
     // Shared with the Handle rather than a second counter, so sent and received
     // lines interleave in the order they actually happened.
@@ -779,6 +852,30 @@ pub fn start(
                         Err(e) => e.into_inner(),
                     };
                     map.insert(from, name);
+                }
+            }
+
+            // Which build they are on. Length-capped before it is stored: this
+            // is a string from the network that ends up in the roster, and
+            // nothing else here bounds what a sender may put in it.
+            if h.kind == KIND_VERSION && len > HEADER_LEN {
+                let v: String = String::from_utf8_lossy(&buf[HEADER_LEN..len])
+                    .chars()
+                    .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '+'))
+                    .take(24)
+                    .collect();
+                if !v.is_empty() {
+                    let mut map = match rx_versions.lock() {
+                        Ok(m) => m,
+                        Err(e) => e.into_inner(),
+                    };
+                    // Only when it changes. One of these arrives from every
+                    // machine every thirty seconds, and a line each would bury
+                    // the log in a fact that almost never moves.
+                    if map.get(&from) != Some(&v) {
+                        eprintln!("[net] {from} is on {v}");
+                    }
+                    map.insert(from, v);
                 }
             }
 
@@ -859,6 +956,7 @@ pub fn start(
         targets,
         target: Arc::new(Mutex::new(None)),
         names,
+        versions,
         heard,
         last_audio,
         messages,

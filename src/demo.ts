@@ -26,7 +26,8 @@ export const DEMO_PEERS: Peer[] = [
 		addr: '192.168.0.118:9001',
 		live: true,
 		talking: false,
-		manual: false
+		manual: false,
+		version: null
 	},
 	{
 		id: 'demo-riya',
@@ -34,7 +35,8 @@ export const DEMO_PEERS: Peer[] = [
 		addr: '192.168.0.126:9001',
 		live: true,
 		talking: false,
-		manual: false
+		manual: false,
+		version: null
 	},
 	{
 		id: 'demo-salman',
@@ -42,7 +44,8 @@ export const DEMO_PEERS: Peer[] = [
 		addr: '192.168.0.142:9001',
 		live: true,
 		talking: true,
-		manual: false
+		manual: false,
+		version: null
 	},
 	{
 		id: 'demo-emon',
@@ -50,7 +53,8 @@ export const DEMO_PEERS: Peer[] = [
 		addr: '192.168.0.151:9001',
 		live: true,
 		talking: false,
-		manual: false
+		manual: false,
+		version: null
 	},
 	{
 		id: 'demo-ahad',
@@ -58,7 +62,8 @@ export const DEMO_PEERS: Peer[] = [
 		addr: '192.168.0.159:9001',
 		live: true,
 		talking: false,
-		manual: false
+		manual: false,
+		version: null
 	},
 	{
 		id: 'demo-rashique',
@@ -66,7 +71,8 @@ export const DEMO_PEERS: Peer[] = [
 		addr: '192.168.0.167:9001',
 		live: false,
 		talking: false,
-		manual: false
+		manual: false,
+		version: null
 	},
 	{
 		// Manually added, so the Settings list has one row with an editable
@@ -76,7 +82,8 @@ export const DEMO_PEERS: Peer[] = [
 		addr: '192.168.0.174:9001',
 		live: true,
 		talking: false,
-		manual: true
+		manual: true,
+		version: null
 	}
 ];
 

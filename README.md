@@ -76,6 +76,7 @@ Two things it does that most of the alternatives cannot:
 | **Finds everyone by itself** | mDNS discovery — no addresses to type on a normal network. |
 | **Reports absence** | A heartbeat every two seconds; somebody who goes quiet greys out within seven. It says who is *not* there, not just who is. |
 | **Names you choose** | `DEVS002` is not Rafi. Name a machine when you add it, or rename, correct or remove it later. |
+| **Says when builds disagree** | Each machine puts its version on the heartbeat, so a PC left behind on an older build is named in the roster instead of just going quiet. Nothing is asked of the internet — this only knows what the machines on your own network say. |
 
 ---
 

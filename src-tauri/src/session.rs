@@ -169,6 +169,11 @@ impl Session {
                     p.name = name;
                 }
             }
+            // Only ever from the socket. A discovered machine that is not
+            // answering has told us nothing about what it runs, and the roster
+            // showing a version for a peer that is greyed out would be
+            // remembering rather than reporting.
+            p.version = self.net.version_of(p.addr);
             // Your own name wins over both. A PC name is what the machine calls
             // itself; this is what you call the person sitting at it, and it is
             // the only one anybody chose on purpose.
@@ -217,6 +222,7 @@ fn manual_peers(manual: &[String]) -> Vec<discovery::Peer> {
                 live: false,
                 talking: false,
                 manual: true,
+                version: None,
             }),
             Err(e) => {
                 eprintln!("[net] manual peer {entry}: {e:#}");

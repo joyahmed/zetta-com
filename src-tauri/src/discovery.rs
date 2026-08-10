@@ -47,6 +47,14 @@ pub struct Peer {
     /// that never goes live is a wrong address, where a discovered one that
     /// goes quiet is a switched-off PC, and those want different reactions.
     pub manual: bool,
+    /// Which build they are running, once they have said so. Set by the session
+    /// from the socket, like `talking` — mDNS never carries it.
+    ///
+    /// `None` means either a machine that has not sent one yet or one too old
+    /// to send one at all, and the roster must not present those as a problem:
+    /// on a network where nobody has updated, every entry is `None` and there is
+    /// nothing wrong.
+    pub version: Option<String>,
 }
 
 struct Entry {
@@ -257,6 +265,7 @@ pub fn start(port: u16) -> Result<Discovery> {
                                     live: true,
                                     talking: false,
                                     manual: false,
+                                    version: None,
                                 },
                                 seen: Instant::now(),
                             },

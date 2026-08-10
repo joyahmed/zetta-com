@@ -1,8 +1,26 @@
+import { useVersion } from '../hooks/useVersion';
+import { mismatched } from '../utils/version';
 import { PeerRow } from './PeerRow';
 
 const Empty = ({ children }: { children: React.ReactNode }) => (
 	<p className='rounded-lg border border-dashed border-line px-3 py-6 text-center text-sm text-muted'>
 		{children}
+	</p>
+);
+
+/// Says when the network is running more than one build of the app.
+///
+/// Not an update notice — nothing here knows a release exists, and the app
+/// never asks the internet. This only appears once somebody has already
+/// updated a machine by hand, and it exists because the alternative was
+/// watching a PC on an older build go silent with nothing anywhere saying why.
+/// A wire format change is invisible from the outside: everything runs, the
+/// counters move, and the other machine simply is not there.
+const Builds = ({ odd, mine }: BuildsProps) => (
+	<p className='rounded-lg border border-line bg-sunken px-3 py-2 text-xs text-muted'>
+		<span className='text-ink'>Different builds on this network.</span>{' '}
+		{odd.map(p => `${p.name} ${p.version}`).join(', ')} — you are on {mine}.
+		Machines on different builds may stop hearing each other.
 	</p>
 );
 
@@ -14,6 +32,8 @@ const Empty = ({ children }: { children: React.ReactNode }) => (
 /// that machine alone, and "Everyone" puts it back.
 export const Roster = ({ peers, running, target, onTarget }: RosterProps) => {
 	const live = peers.filter(p => p.live).length;
+	const mine = useVersion();
+	const odd = mismatched(peers, mine);
 
 	return (
 		<section className='flex flex-col gap-2'>
@@ -40,6 +60,8 @@ export const Roster = ({ peers, running, target, onTarget }: RosterProps) => {
 					{live} live
 				</span>
 			</button>
+
+			{odd.length > 0 && <Builds {...{ odd, mine }} />}
 
 			{!running && <Empty>Press Start to look for other PCs.</Empty>}
 

@@ -77,6 +77,11 @@ type Peer = {
 	/// push-to-talk, receiving audio *is* the fact that somebody is speaking —
 	/// no flag in the header could say it more reliably.
 	talking: boolean;
+	/// The build they are running, once they have said so. Null for a machine
+	/// that has not sent one yet, and for every build older than this feature,
+	/// which never sends one at all — so null is an ordinary state and never
+	/// means anything is wrong.
+	version: string | null;
 };
 
 type TalkBarProps = { held: boolean; key_: string; to: string };
@@ -134,6 +139,13 @@ type PeerRowProps = {
 	peer: Peer;
 	selected: boolean;
 	onSelect: () => void;
+};
+
+/// The machines not on your build, and your own version to name beside them.
+/// `version` is non-null here because the list is filtered on it.
+type BuildsProps = {
+	odd: (Peer & { version: string })[];
+	mine: string;
 };
 
 type RosterProps = {
