@@ -1,7 +1,31 @@
-# Zetta Com
+<div align="center">
 
-**A LAN intercom.** Hold a key, and the people you choose hear you — one person
-or the whole room.
+<img src="app-icon.png" alt="" width="104" height="104">
+
+<h1>Zetta Com</h1>
+
+<p><strong>A LAN intercom.</strong><br>
+Hold a key, and the people you choose hear you — one person or the whole room.</p>
+
+<p>
+  <a href="https://github.com/joyahmed/zetta-com/actions/workflows/release.yml"><img alt="Release build" src="https://github.com/joyahmed/zetta-com/actions/workflows/release.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/badge/licence-MIT-8b5cf6"></a>
+  <img alt="Windows, macOS and Linux" src="https://img.shields.io/badge/Windows%20%7C%20macOS%20%7C%20Linux-334155">
+  <img alt="2.5 MB installer" src="https://img.shields.io/badge/installer-2.5%20MB-06b6d4">
+  <img alt="LAN only, no internet" src="https://img.shields.io/badge/network-LAN%20only-22c55e">
+</p>
+
+<p>
+  <a href="#why-this-and-not-something-else">Why this</a> ·
+  <a href="#install">Install</a> ·
+  <a href="#what-it-does">What it does</a> ·
+  <a href="#shortcuts">Shortcuts</a> ·
+  <a href="#using-it">Using it</a> ·
+  <a href="#security">Security</a> ·
+  <a href="#how-it-works">How it works</a>
+</p>
+
+</div>
 
 No internet. No accounts. No server. No configuration. Start it on two machines
 on the same network and they find each other; hold `F8` and talk. Your voice
@@ -26,7 +50,7 @@ Every other way of doing this asks for something Zetta Com does not.
 | **Walkie-talkies** | Hardware to buy, charge, and lose. In some bands, licensing. And nothing on a screen telling you who is actually listening. |
 | **A phone call** | One person, and they have to answer. |
 
-Zetta Com is a 3 MB installer that needs a network cable and nothing else. It
+Zetta Com is a 2.5 MB installer that needs a network cable and nothing else. It
 runs on an air-gapped network. It runs in a workshop, a warehouse, a studio, a
 site office — anywhere there is a LAN and people who need to reach each other
 faster than walking.
@@ -195,6 +219,28 @@ That administrator requirement is also why the installer is per-machine: adding
 a firewall rule is not something a per-user install is allowed to do, and one
 that tried would fail silently and leave you with the prompt it was meant to
 replace.
+
+---
+
+## Where your data lives
+
+One file, on your machine:
+
+```
+Windows   %APPDATA%\com.joy.zetta-com\transport.json
+macOS     ~/Library/Application Support/com.joy.zetta-com/transport.json
+Linux     ~/.config/com.joy.zetta-com/transport.json
+```
+
+It holds the port, the PCs you added and the names you gave them, the order they
+sit in, your rebound keys, your presets and the room passphrase. There is no
+account, no sync, no analytics, and no call to anything outside your own
+network. Delete that file and the app is back to a first start.
+
+It is kept on the Rust side rather than in the webview because a machine whose
+only job is to listen has to come up receiving before any window has loaded.
+That is also why the passphrase is in plain text there — see
+[Security](#security).
 
 ---
 
