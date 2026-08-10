@@ -1,50 +1,50 @@
 {
-  "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Zetta Com",
-  "version": "1.2.0",
-  "identifier": "com.joy.zetta-com",
-  "build": {
-    "beforeDevCommand": "bun run dev",
-    "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "bun run build",
-    "frontendDist": "../dist"
-  },
-  "app": {
-    "macOSPrivateApi": true,
-    "windows": [
-      {
-        "title": "Zetta Com",
-        "width": 460,
-        "height": 800,
-        "minWidth": 380,
-        "minHeight": 520,
-        "maxWidth": 560,
-        "maxHeight": 1400,
-        "maximizable": false,
-        "decorations": false,
-        "transparent": true,
-        "visible": false
-      }
-    ],
-    "security": {
-      "csp": null
-    }
-  },
-  "bundle": {
-    "active": true,
-    "targets": "all",
-    "windows": {
-      "nsis": {
-        "installerHooks": "installer-hooks.nsh",
-        "installMode": "perMachine"
-      }
-    },
-    "icon": [
-      "icons/32x32.png",
-      "icons/128x128.png",
-      "icons/128x128@2x.png",
-      "icons/icon.icns",
-      "icons/icon.ico"
-    ]
-  }
+	"$schema": "https://schema.tauri.app/config/2",
+	"productName": "Zetta Com",
+	"version": "1.3.0",
+	"identifier": "com.joy.zetta-com",
+	"build": {
+		"beforeDevCommand": "bun run dev",
+		"devUrl": "http://localhost:1420",
+		"beforeBuildCommand": "bun run build",
+		"frontendDist": "../dist"
+	},
+	"app": {
+		"macOSPrivateApi": true,
+		"windows": [
+			{
+				"title": "Zetta Com",
+				"width": 460,
+				"height": 800,
+				"minWidth": 380,
+				"minHeight": 520,
+				"maxWidth": 560,
+				"maxHeight": 1400,
+				"maximizable": false,
+				"decorations": false,
+				"transparent": true,
+				"visible": false
+			}
+		],
+		"security": {
+			"csp": null
+		}
+	},
+	"bundle": {
+		"active": true,
+		"targets": "all",
+		"windows": {
+			"nsis": {
+				"installerHooks": "installer-hooks.nsh",
+				"installMode": "perMachine"
+			}
+		},
+		"icon": [
+			"icons/32x32.png",
+			"icons/128x128.png",
+			"icons/128x128@2x.png",
+			"icons/icon.icns",
+			"icons/icon.ico"
+		]
+	}
 }
