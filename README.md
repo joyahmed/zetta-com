@@ -119,7 +119,12 @@ build it yourself.
 
 ### Linux
 
-`.deb` or `.AppImage`. Needs `libasound2-dev` at build time only.
+`.deb` or `.rpm`. Needs `libasound2-dev` at build time only.
+
+There is no AppImage. It has to carry its own copy of WebKitGTK and GStreamer to
+run on a machine that has neither, which made it 79 MB against the 4 MB of a
+`.deb` that simply depends on what the distribution already ships. On anything
+else, build it yourself — it is two commands.
 
 ### Build it yourself
 
@@ -128,9 +133,9 @@ bun install
 bun run tauri build
 ```
 
-Artifacts land in `src-tauri/target/release/bundle/` — MSI and NSIS on Windows,
-`.deb` and `.AppImage` on Linux, `.dmg` on macOS. Each platform builds only its
-own; the [release workflow](.github/workflows/release.yml) does all of them.
+Artifacts land in `src-tauri/target/release/bundle/` — NSIS on Windows, `.deb`
+and `.rpm` on Linux, `.dmg` on macOS. Each platform builds only its own; the
+[release workflow](.github/workflows/release.yml) does all of them.
 
 > [!NOTE]
 > Building on **Windows** also needs [CMake](https://cmake.org/download/), which
@@ -203,10 +208,15 @@ in Settings needs no firewall change, and mDNS on 5353 is covered by the same
 rule. Uninstalling removes it.
 
 > [!WARNING]
-> If you install from the **MSI**, or run a build straight out of
-> `target/release/bundle`, you get Windows' prompt instead. **Allow it.** If you
-> cancel, Windows writes a *block* rule that outranks everything afterwards and
-> leaves no visible trace.
+> If you run a build straight out of `target/release/bundle` rather than
+> installing it, you get Windows' prompt instead. **Allow it.** If you cancel,
+> Windows writes a *block* rule that outranks everything afterwards and leaves
+> no visible trace.
+>
+> This is also why there is no MSI. The firewall rule is added by an NSIS
+> installer hook, and the MSI has no equivalent here — so it produced an install
+> that looked identical to the working one and then walked the user into exactly
+> the failure this application was written to remove.
 
 To repair a cancelled prompt, or add the rule by hand — **as administrator**:
 
