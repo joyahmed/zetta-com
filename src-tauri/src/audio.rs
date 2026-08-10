@@ -70,6 +70,12 @@ const CAPTURE_REBUILDS: u32 = 2;
 /// The slow cadence: a second of interrupted playback a minute, against a
 /// microphone that has already failed to come back twice.
 const CAPTURE_BACKOFF_POLLS: u32 = 60;
+/// How often to try opening a microphone the machine has but the app does not.
+///
+/// Fifteen seconds, and it can afford to be patient because it costs nothing:
+/// this builds a capture stream on its own without touching playback, so
+/// failing again is a line in the log rather than a gap in the audio.
+const CAPTURE_RETRY_POLLS: u32 = 15;
 
 /// Which devices to use, by name, or the system default when `None`.
 ///
@@ -251,7 +257,7 @@ pub fn start(transmit: Arc<AtomicBool>, prefs: Prefs) -> Result<Pipeline> {
                     &prefs,
                 );
 
-                let streams = match built {
+                let mut streams = match built {
                     Ok(s) => {
                         if first {
                             let _ = ready_tx.send(Ok(()));
@@ -278,9 +284,9 @@ pub fn start(transmit: Arc<AtomicBool>, prefs: Prefs) -> Result<Pipeline> {
                 let has_output = streams._output.is_some();
                 let mut last_pulse = streams.stats.out_calls.load(Ordering::Relaxed);
                 let mut quiet = 0u32;
-                let has_input = streams._input.is_some();
                 let mut last_in = streams.stats.in_calls.load(Ordering::Relaxed);
                 let mut in_quiet = 0u32;
+                let mut absent = 0u32;
 
                 while !thread_stop.load(Ordering::Relaxed)
                     && !rebuild.load(Ordering::Relaxed)
@@ -322,18 +328,78 @@ pub fn start(transmit: Arc<AtomicBool>, prefs: Prefs) -> Result<Pipeline> {
                         }
                     }
 
-                    // The same test, for the microphone — and this is the one
-                    // that was missing. A capture stream can open, report no
-                    // error, and never be called, which is what a machine that
-                    // started before its audio endpoints were ready looks like
-                    // from in here. Nothing above notices: the device name has
-                    // not changed, playback is fine, and the only capture
-                    // counters move solely while the talk key is held. So the
-                    // app went on believing it had a microphone, everyone else
-                    // heard silence when the key went down, and the state
-                    // survived until the process did — which is exactly why
-                    // logging out and back in looked like the remedy.
-                    if has_input {
+                    // No capture stream at all, on a machine that has a
+                    // microphone.
+                    //
+                    // Either there was none when this generation was built, or
+                    // a rebuild raced the device being released and `select`
+                    // came back empty — and that second case is a trap of this
+                    // design's own making. With no stream there is no pulse to
+                    // watch, and the device poll above compares *names*, which
+                    // have not changed. Nothing would ever try again, so a
+                    // rebuild meant to recover a dead microphone could leave the
+                    // app with no microphone at all until it was restarted:
+                    // worse than the fault it was fixing.
+                    //
+                    // Repaired in place rather than by breaking to a rebuild,
+                    // because playback is working here and must not be cut every
+                    // half minute on a machine whose microphone is blocked in
+                    // Windows privacy settings and is never going to open. The
+                    // encoder this spawns belongs to the current `generation`,
+                    // so it is torn down with everything else.
+                    if streams._input.is_none() {
+                        absent += 1;
+                        if absent >= CAPTURE_RETRY_POLLS && describe_devices(&prefs).0.is_some() {
+                            absent = 0;
+                            let host = cpal::default_host();
+                            let built = select(&host, true, prefs.input.as_deref()).and_then(
+                                |(device, cfg)| {
+                                    build_capture(
+                                        &device,
+                                        &cfg,
+                                        &thread_stop,
+                                        &generation,
+                                        &rebuild,
+                                        &transmit,
+                                        &streams.stats,
+                                        out_tx.clone(),
+                                    )
+                                    .map_err(|e| {
+                                        eprintln!("[audio] capture still unavailable: {e:#}")
+                                    })
+                                    .ok()
+                                },
+                            );
+                            if let Some(s) = built {
+                                match s.play() {
+                                    Ok(()) => {
+                                        eprintln!("[audio] capture recovered");
+                                        // Reset the pulse, or the watchdog below
+                                        // reads a counter that has not moved
+                                        // since before this stream existed and
+                                        // declares the new one dead on arrival.
+                                        last_in = streams.stats.in_calls.load(Ordering::Relaxed);
+                                        in_quiet = 0;
+                                        streams._input = Some(s);
+                                    }
+                                    Err(e) => eprintln!("[audio] capture would not start: {e}"),
+                                }
+                            }
+                        }
+                    } else {
+                        // The same test as playback, for the microphone — and
+                        // this is the one that was missing. A capture stream can
+                        // open, report no error, and never be called, which is
+                        // what a machine that started before its audio endpoints
+                        // were ready looks like from in here. Nothing above
+                        // notices: the device name has not changed, playback is
+                        // fine, and `frames` and `in_drops` only move while the
+                        // talk key is held. So the app went on believing it had
+                        // a microphone, everyone else heard silence when the key
+                        // went down, and the state survived as long as the
+                        // process — which is exactly why logging out and back in
+                        // looked like the remedy.
+                        //
                         // Fast while the cause still looks like a device that
                         // has not finished waking up, slow once it does not.
                         let patience = if cap_attempts < CAPTURE_REBUILDS {
