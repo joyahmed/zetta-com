@@ -337,3 +337,16 @@ it out of the config file.
 ## Licence
 
 MIT. See [LICENSE](LICENSE).
+
+---
+
+## Who builds this
+
+Built by [Joy Ahmed](https://github.com/joyahmed) at
+**[ZettaByte](https://zettabyteincorp.com)** — we build the systems businesses
+run on, and the tools we need in order to build them. This is one of the latter,
+published because the reasoning in it is worth reading even if the app is not
+for you.
+
+The rest of what we publish is at
+[zettabyteincorp.com/open-source](https://zettabyteincorp.com/open-source).
