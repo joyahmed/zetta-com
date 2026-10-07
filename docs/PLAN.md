@@ -4,7 +4,8 @@ A LAN intercom: hold a key, everyone on the network hears you. No internet, no
 accounts, no server. This is the Tauri + Rust rewrite of a working batch +
 PowerShell version.
 
-Updated 2026-08-09.
+Updated 2026-10-07 (app at 1.5; step lists for what landed since 1.4.0 are in
+[IMPROVEMENTS.md](IMPROVEMENTS.md)).
 
 ---
 
@@ -39,6 +40,65 @@ needs acoustic echo cancellation via `webrtc-audio-processing` (C++ bindings,
 build friction on all three platforms) plus mixing and per-speaker gain, and it
 becomes the project rather than a step in it. If real full duplex is ever the
 requirement, Mumble already solves it.
+
+**Headphones switch: two-way talk is opt-in, half-duplex stays the default.**
+Added since 1.4.0. A setting keeps playback on while the talk key is held. It is
+live (an atomic read in the playback callbacks, no audio restart), saved per
+machine, and **off** by default, because the mute is the echo fix and with
+speakers and the switch on everyone hears themselves back. ⛔ Two-way needs
+**both** people to turn it on: a person on speakers still mutes their own
+playback while talking, so they cannot hear the other side answer. The setting
+text says so. While muted, the playback buffer is now emptied rather than left
+to fill, so nothing stale plays on release. Steps in
+[IMPROVEMENTS.md](IMPROVEMENTS.md) Phase B. `71dfa58`.
+
+**F7 replies to whoever spoke last.** Held like talk: it aims at the machine
+whose voice arrived most recently, opens the mic, and leaves the target there so
+a typed answer goes to the same person. Voice only; a text does not change who
+"spoke last". Nobody heard yet, or that machine has gone offline: the mic stays
+closed, never everyone. The lookup reuses the per-machine last-voice time the
+roster already kept. `0de5c6f`.
+
+**Sounds are pushed from Rust, not found by polling.** The roster is polled
+every 400 ms, which is right for a list and wrong for a sound: a beep for
+"someone started talking" would land mid-sentence. The net thread (which has no
+window handle) calls into `notify.rs`, which emits `voice-start` (a machine's
+audio begins after 400 ms of silence, the same threshold that ends "talking" in
+the roster) and `talk-key` (own mic opens or closes, once per change, not per
+key repeat). The window plays the sounds through the system default output, as
+the message chime always did. A beep cannot come *before* the voice without
+delaying every voice, so it plays as the voice starts; that trade was rejected.
+The offline/online tone for a watched PC rides the existing roster poll, so it
+is about seven seconds late by design: it must not fire on one lost packet. Each
+sound has its own switch and Test button, with one volume; the own-key tick is
+off by default because on speakers the room hears it. `07db99c`.
+
+**Receipts ride the header's `ts` field, and `VER` was not bumped.** A text
+used to send `ts: 0`, a field text never used. It now carries a random message
+id, and a receiver answers with a header-only `KIND_ACK` (4) whose `ts` is that
+id, every time, so a lost answer gets another chance. The sender's line shows
+`✓` or `✓ 3/6`, names on hover, and "nobody online" in red only when it went to
+nobody. No answer is never red: a build from before receipts never answers, and
+no answer is not the same as not delivered. It means *received by the app*, not
+*read*. ⛔ Bumping `VER` was rejected: `Header::parse` drops every packet whose
+version differs, so a bump splits the office in two until every machine
+updates, with nothing on screen saying why. A new *kind* is skipped harmlessly
+by an old build, as `KIND_VERSION` already was. `11fb8cf`.
+
+**Replay guard.** The room seal proves a packet came from inside the room, not
+that it is new, so a recorded text sent again appeared again. The same message
+id closes this: the last 200 (sender, id) pairs are remembered and a repeat is
+not shown (it is still answered, so the sender's receipt completes). Id 0, sent
+by older builds, is never dropped, so they keep working. `11fb8cf`.
+
+**Saved groups.** Decided 2026-10-07: groups are **saved named lists**, not
+members picked on the spot. The target is `All | One | Group`; members are
+stored by address like labels, so a renamed PC stays in. A send goes to the
+group members that are live. ⛔ Offline members are left out and logged, and if
+none are live it goes to **nobody, never to everyone**, the same rule as one PC.
+Deleting a group that is aimed falls back to Everyone as the selection, which
+is a choice of aim, not a send. No global key per group by default: every
+global key is taken from every other program on the machine. `ba09186`.
 
 **Address one machine or everyone.** ~~No per-person targeting~~ — reversed on
 2026-08-09, the same day it was settled twice the other way, once the actual
@@ -86,23 +146,30 @@ produces garbage.
 
 ## Wire format
 
-Eight bytes, big-endian, in front of every payload.
+Eight bytes, big-endian, in front of every payload. `VER` is currently `2`
+(raised when the room passphrase began sealing every packet). Message types
+added since have been new *kinds*, not new versions.
 
 ```
  0        1        2                 4                              8
  ┌────────┬────────┬─────────────────┬──────────────────────────────┐
  │  ver   │  kind  │       seq       │          timestamp           │
- │  u8=1  │  u8    │       u16       │             u32              │
+ │  u8=2  │  u8    │       u16       │             u32              │
  └────────┴────────┴─────────────────┴──────────────────────────────┘
 ```
 
 - `ver` — one byte that stops a future build's packets being decoded as noise.
-- `kind` — `0` audio, `1` text, `2` heartbeat.
+- `kind` — `0` audio, `1` text, `2` heartbeat, `3` version (which build this
+  machine runs, sent about every 30 s), `4` ack (a text arrived). An unknown
+  kind is skipped by older builds, which is why a new feature adds a kind and
+  does not bump `ver`.
 - `seq` — wrapping, +1 per packet. **Compare with `wrapping_sub`.** It wraps
   after about 22 minutes of continuous talking, so a plain `>` comparison stalls
   the receiver permanently in a real conversation and never in a test.
 - `timestamp` — sample index. Advances by the *sender's* frame size, which is
-  `rate / 50` and may be 320 rather than 960. The receiver must never assume it.
+  `rate / 50` and may be 320 rather than 960. The receiver must never assume it. **For text (`kind` 1) it is not a clock:
+  it is the message id**, random per message (0 from older builds), and an ack
+  (`kind` 4) echoes it back. The same id feeds the replay guard.
 
 One Opus frame per datagram, roughly 80–120 bytes, nowhere near MTU. The old
 `pkt_size=1316` constraint was an MPEG-TS artifact and does not apply.
@@ -221,7 +288,9 @@ This is the thing the old version could never do, and it removes most of the
 - [x] **4c** Local playback silenced while transmitting. **This is the whole
       echo strategy.** Capture keeps draining its ring while the key is up, or
       the first thing anyone heard on pressing it would be stale room noise.
-- [x] The full shortcut set — no per-person keys (#13).
+- [x] The full shortcut set (#13). It began without per-person keys; the
+      numbered keys that talk to or message roster entry N came with the
+      reversal of "everyone only" below.
 
 *Done when:* hold to talk, release to listen, no feedback with speakers on.
 
@@ -293,8 +362,11 @@ union of discovered and manually added peers, with the source visible, and
 manual entries persist. An address typed manually is also the fix for the v1 case
 of a PC whose name would not resolve on the LAN at all.
 
-**A complete shortcut set** (step 4), not one push-to-talk key — but **no
-per-person keys**, since targeting stays "everyone". Keys cover talking, sending
+**A complete shortcut set** (step 4), not one push-to-talk key — and,
+since the 2026-08-09 reversal above, **numbered keys for talking to or messaging
+one roster entry**, plus later F7 for reply. There is no key per group by
+default: every global key is taken from every other program on the machine.
+Keys cover talking, sending
 each preset message, showing and hiding the window, and muting. They must be
 reassignable, persisted, and must report failure to register: a global hotkey
 silently losing a registration race to another application is a v1-class silent
@@ -316,8 +388,8 @@ scheduled announcements; both were considered and neither is wanted.
 inventing pleasantries on somebody's behalf was presumptuous. The mechanism
 stays for anyone who wants a key that fires a sentence they actually use.
 
-**Adding a PC means adding someone who can be addressed**, individually or as
-part of the room. That is the reversal above: the roster is the choice of who is
+**Adding a PC means adding someone who can be addressed**, individually, in a
+saved group, or as part of the room. That is the reversal above: the roster is the choice of who is
 being spoken to, not merely a list of who exists.
 
 ---
