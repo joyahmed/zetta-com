@@ -586,6 +586,9 @@ fn on_err(rebuild: &Arc<AtomicBool>) -> impl FnMut(cpal::Error) + Send + 'static
 
 /// Microphone → ring A → Opus → `out_tx`. Owns ring A entirely, so nothing
 /// about it exists when there is no input device.
+// Each argument is a separate shared handle the stream thread needs. Bundling
+// them into a struct only to quiet the lint would hide what crosses threads.
+#[allow(clippy::too_many_arguments)]
 fn build_capture(
     device: &Device,
     cfg: &SupportedStreamConfig,
@@ -631,7 +634,7 @@ fn build_capture(
     let st = stats.clone();
     let stream = match cfg.sample_format() {
         SampleFormat::F32 => device.build_input_stream(
-            stream_cfg.clone(),
+            stream_cfg,
             move |data: &[f32], _: &cpal::InputCallbackInfo| {
                 st.in_calls.fetch_add(1, Ordering::Relaxed);
                 for f in data.chunks_exact(ch) {
@@ -648,7 +651,7 @@ fn build_capture(
             None,
         )?,
         SampleFormat::I16 => device.build_input_stream(
-            stream_cfg.clone(),
+            stream_cfg,
             move |data: &[i16], _: &cpal::InputCallbackInfo| {
                 st.in_calls.fetch_add(1, Ordering::Relaxed);
                 for f in data.chunks_exact(ch) {
@@ -742,6 +745,8 @@ fn build_capture(
 }
 
 /// `in_rx` → Opus → ring B → speakers. Owns ring B entirely.
+// Same reason as build_capture.
+#[allow(clippy::too_many_arguments)]
 fn build_playback(
     device: &Device,
     cfg: &SupportedStreamConfig,
@@ -795,7 +800,7 @@ fn build_playback(
             let st = stats.clone();
             let out_transmit = transmit.clone();
             device.build_output_stream(
-                stream_cfg.clone(),
+                stream_cfg,
                 move |data: &mut [f32], _: &cpal::OutputCallbackInfo| {
                     st.out_calls.fetch_add(1, Ordering::Relaxed);
                     // Silent while transmitting. This is the echo prevention:
@@ -837,7 +842,7 @@ fn build_playback(
             let st = stats.clone();
             let out_transmit = transmit.clone();
             device.build_output_stream(
-                stream_cfg.clone(),
+                stream_cfg,
                 move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
                     st.out_calls.fetch_add(1, Ordering::Relaxed);
                     if out_transmit.load(Ordering::Relaxed) {
@@ -1179,7 +1184,7 @@ fn pick(device: &Device, input: bool) -> Result<SupportedStreamConfig> {
                 })
                 .min_by_key(|r| r.channels())
             {
-                return Ok(r.clone().with_sample_rate(hz));
+                return Ok((*r).with_sample_rate(hz));
             }
         }
     }
@@ -1220,4 +1225,53 @@ fn pick(device: &Device, input: bool) -> Result<SupportedStreamConfig> {
         "{which} device offers no usable config (needs F32 or I16); it offers: {}",
         offered.join(", ")
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nearest_opus_rounds_down() {
+        assert_eq!(nearest_opus(48_000), 48_000);
+        assert_eq!(nearest_opus(96_000), 48_000);
+        assert_eq!(nearest_opus(44_100), 24_000);
+        assert_eq!(nearest_opus(16_000), 16_000);
+        assert_eq!(nearest_opus(4_000), 8_000);
+    }
+
+    #[test]
+    fn same_rate_is_a_copy() {
+        let mut r = Resampler::new(48_000, 48_000);
+        let input: Vec<i16> = (0..960).map(|i| i as i16).collect();
+        let mut out = vec![0; 960];
+        assert_eq!(r.process(&input, &mut out), 960);
+        assert_eq!(out, input);
+    }
+
+    #[test]
+    fn rate_holds_over_many_chunks() {
+        // 48k to 44.1k, one second in 20 ms chunks. The fraction carried across
+        // chunks is what keeps the total right; resetting it drifts.
+        let mut r = Resampler::new(48_000, 44_100);
+        let input = vec![1000i16; 960];
+        let mut out = vec![0; 2000];
+        let total: usize = (0..50).map(|_| r.process(&input, &mut out)).sum();
+        assert!((44_090..=44_110).contains(&total), "{total}");
+    }
+
+    #[test]
+    fn upsampling_interpolates_between_samples() {
+        let mut r = Resampler::new(24_000, 48_000);
+        let mut out = vec![0; 8];
+        let n = r.process(&[0, 100, 200, 300], &mut out);
+        assert_eq!(n, 8);
+        assert_eq!(&out[..n], &[0, 50, 100, 150, 200, 250, 300, 300]);
+    }
+
+    #[test]
+    fn empty_input_writes_nothing() {
+        let mut r = Resampler::new(48_000, 44_100);
+        assert_eq!(r.process(&[], &mut [0; 10]), 0);
+    }
 }

@@ -232,6 +232,8 @@ fn manual_peers(manual: &[String]) -> Vec<discovery::Peer> {
         .collect()
 }
 
+// Each argument is a separate piece of state the session is built from.
+#[allow(clippy::too_many_arguments)]
 pub fn start(
     port: u16,
     peer: &str,

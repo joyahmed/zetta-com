@@ -72,7 +72,7 @@ Tests go in `#[cfg(test)] mod tests` inside each file, so private types like
 
 ### A.4 — Audio maths (`audio.rs:1034-1120`)
 
-- [ ] `nearest_opus` maps 44,100 → 48,000 and leaves 48,000, 16,000 alone.
+- [ ] `nearest_opus` rounds down: 44,100 → 24,000 (on purpose, `audio.rs:1030-1032`), 48,000 and 16,000 stay, anything under 8,000 → 8,000.
 - [ ] `Resampler::process` 48k → 44.1k returns about 0.919× the samples, and 1:1 returns the input.
 
 ### A.5 — Clean lint

@@ -180,3 +180,95 @@ impl Room {
             .ok()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const H: &[u8] = &[2, 1, 0, 7, 0, 0, 0, 0];
+
+    #[test]
+    fn seal_then_open() {
+        let r = Room::new("amber-flint").unwrap();
+        let sealed = r.seal(H, b"hello").unwrap();
+        assert_eq!(sealed.len(), b"hello".len() + OVERHEAD);
+        assert_eq!(r.open(H, &sealed).unwrap(), b"hello");
+    }
+
+    #[test]
+    fn another_room_cannot_open_it() {
+        let sealed = Room::new("amber-flint").unwrap().seal(H, b"hello").unwrap();
+        assert!(Room::new("amber-flinT").unwrap().open(H, &sealed).is_none());
+    }
+
+    #[test]
+    fn same_passphrase_on_another_machine_opens_it() {
+        // Two runs differ in nonce prefix, not in key, and stray spaces from a
+        // paste do not make a different room.
+        let sealed = Room::new("amber-flint").unwrap().seal(H, b"hello").unwrap();
+        assert_eq!(Room::new(" amber-flint ").unwrap().open(H, &sealed).unwrap(), b"hello");
+    }
+
+    #[test]
+    fn edited_header_fails() {
+        let r = Room::new("amber-flint").unwrap();
+        let sealed = r.seal(H, b"hello").unwrap();
+        let mut h = H.to_vec();
+        h[3] ^= 1;
+        assert!(r.open(&h, &sealed).is_none());
+    }
+
+    #[test]
+    fn edited_body_fails() {
+        let r = Room::new("amber-flint").unwrap();
+        let mut sealed = r.seal(H, b"hello").unwrap();
+        let last = sealed.len() - 1;
+        sealed[last] ^= 1;
+        assert!(r.open(H, &sealed).is_none());
+    }
+
+    #[test]
+    fn short_body_is_refused_without_panicking() {
+        let r = Room::new("amber-flint").unwrap();
+        for len in 0..=OVERHEAD {
+            assert!(r.open(H, &vec![0; len]).is_none(), "len {len}");
+        }
+    }
+
+    #[test]
+    fn nonces_never_repeat() {
+        let r = Room::new("amber-flint").unwrap();
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..1000 {
+            let s = r.seal(H, b"x").unwrap();
+            assert!(seen.insert(s[..12].to_vec()));
+        }
+    }
+
+    #[test]
+    fn no_passphrase_means_no_room() {
+        assert!(Room::new("").is_none());
+        assert!(Room::new("   ").is_none());
+        assert!(code("").is_none());
+    }
+
+    #[test]
+    fn code_is_stable_and_short() {
+        let a = code("amber-flint").unwrap();
+        assert_eq!(a, code("amber-flint").unwrap());
+        assert_ne!(a, code("amber-flinT").unwrap());
+        assert_eq!(a.len(), 4);
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_lowercase()));
+    }
+
+    #[test]
+    fn generated_passphrase_is_five_words_and_hex() {
+        let p = generate();
+        let parts: Vec<&str> = p.split('-').collect();
+        assert_eq!(parts.len(), 6);
+        assert!(parts[..5].iter().all(|w| WORDS.contains(w)));
+        assert_eq!(parts[5].len(), 32);
+        assert!(parts[5].chars().all(|c| c.is_ascii_hexdigit()));
+        assert_ne!(p, generate());
+    }
+}

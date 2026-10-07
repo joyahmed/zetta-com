@@ -314,7 +314,7 @@ impl Handle {
         // away without a word. A selected peer that is not live sends to
         // nobody, which is the case worth naming out loud.
         let n = self.sent_report.fetch_add(1, Ordering::Relaxed);
-        if n % 50 == 0 {
+        if n.is_multiple_of(50) {
             if targets.is_empty() {
                 let t = match self.targets.lock() {
                     Ok(t) => t,
@@ -614,6 +614,18 @@ impl Jitter {
     }
 }
 
+/// How many packets went missing between the one expected and the one that
+/// arrived. Zero for the expected one, and for a straggler that arrives late —
+/// it was already counted as lost when it was skipped.
+///
+/// seq is u16 and wraps every ~22 minutes of talking at 50 packets a second, so
+/// this is wrapping_sub and not `>`. A plain comparison stalls permanently at
+/// the wrap.
+fn gap(want: u16, got: u16) -> u16 {
+    let ahead = got.wrapping_sub(want);
+    if ahead < 0x8000 { ahead } else { 0 }
+}
+
 /// `audio_in` carries `None` for a frame the sequence numbers prove is missing,
 /// so the decoder can conceal the gap rather than skip it.
 pub fn start(
@@ -770,7 +782,7 @@ pub fn start(
                     // send, so the address would never be recorded as told and
                     // would take a packet every single tick.
                     let first = told.insert(addr);
-                    if first || tick % VERSION_EVERY == 0 {
+                    if first || tick.is_multiple_of(VERSION_EVERY) {
                         if let Some(v) = &version {
                             let _ = hb_sock.send_to(v, addr);
                         }
@@ -922,13 +934,7 @@ pub fn start(
                 // carry their own fixed sequence, and folding several senders
                 // into one counter would report gaps that never existed.
                 if let Some(want) = *expected {
-                    // seq is u16 and wraps every ~22 minutes of talking at 50
-                    // packets a second, so this is wrapping_sub and not `>`. A
-                    // plain comparison stalls permanently at the wrap.
-                    let ahead = h.seq.wrapping_sub(want);
-                    if ahead > 0 && ahead < 0x8000 {
-                        rx_counters.lost.fetch_add(ahead as u64, Ordering::Relaxed);
-                    }
+                    rx_counters.lost.fetch_add(gap(want, h.seq) as u64, Ordering::Relaxed);
                 }
                 *expected = Some(h.seq.wrapping_add(1));
                 rx_counters.last_seq.store(h.seq as u64, Ordering::Relaxed);
@@ -965,4 +971,150 @@ pub fn start(
         room,
         threads: vec![hb_thread, rx_thread],
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn header(seq: u16) -> [u8; HEADER_LEN] {
+        let mut buf = [0u8; HEADER_LEN];
+        Header { ver: VER, kind: KIND_AUDIO, seq, ts: 0 }.write(&mut buf);
+        buf
+    }
+
+    /// Feed sequence numbers in and return what came out: `Some(seq)` for a
+    /// released frame, `None` for one declared lost.
+    fn run(jitter: &mut Jitter, seqs: &[u16]) -> Vec<Option<u16>> {
+        let mut got = Vec::new();
+        let mut out = Vec::new();
+        for &s in seqs {
+            jitter.push(s, s.to_be_bytes().to_vec(), &mut out);
+            got.extend(
+                out.drain(..)
+                    .map(|f| f.map(|p| u16::from_be_bytes([p[0], p[1]]))),
+            );
+        }
+        got
+    }
+
+    #[test]
+    fn header_round_trips() {
+        let mut buf = [0u8; HEADER_LEN];
+        Header { ver: VER, kind: KIND_TEXT, seq: 0xBEEF, ts: 0xDEAD_F00D }.write(&mut buf);
+        let h = Header::parse(&buf).unwrap();
+        assert_eq!((h.ver, h.kind, h.seq, h.ts), (VER, KIND_TEXT, 0xBEEF, 0xDEAD_F00D));
+    }
+
+    #[test]
+    fn header_is_big_endian() {
+        let buf = header(0x0102);
+        assert_eq!(&buf[2..4], &[0x01, 0x02]);
+    }
+
+    #[test]
+    fn header_refuses_short_buffers() {
+        for len in 0..HEADER_LEN {
+            assert!(Header::parse(&vec![VER; len]).is_none(), "len {len}");
+        }
+    }
+
+    #[test]
+    fn header_refuses_other_versions() {
+        let mut buf = header(1);
+        for v in [0, VER - 1, VER + 1, 255] {
+            buf[0] = v;
+            assert!(Header::parse(&buf).is_none(), "ver {v}");
+        }
+    }
+
+    #[test]
+    fn in_order_comes_out_one_for_one() {
+        let mut j = Jitter::new();
+        assert_eq!(run(&mut j, &[10, 11, 12, 13]), [Some(10), Some(11), Some(12), Some(13)]);
+    }
+
+    #[test]
+    fn swapped_pair_comes_out_in_order() {
+        let mut j = Jitter::new();
+        assert_eq!(run(&mut j, &[10, 12, 11, 13]), [Some(10), Some(11), Some(12), Some(13)]);
+    }
+
+    #[test]
+    fn missing_frame_is_given_up_on_after_three_behind_it() {
+        let mut j = Jitter::new();
+        assert_eq!(run(&mut j, &[10, 12, 13]), [Some(10)]);
+        // The third packet banked behind the hole proves 11 is late, not
+        // reordered.
+        assert_eq!(run(&mut j, &[14]), [None, Some(12), Some(13), Some(14)]);
+    }
+
+    #[test]
+    fn wrap_at_65535_is_seamless() {
+        let mut j = Jitter::new();
+        assert_eq!(
+            run(&mut j, &[65534, 65535, 0, 1]),
+            [Some(65534), Some(65535), Some(0), Some(1)]
+        );
+    }
+
+    #[test]
+    fn reorder_across_the_wrap() {
+        let mut j = Jitter::new();
+        assert_eq!(
+            run(&mut j, &[65534, 0, 65535, 1]),
+            [Some(65534), Some(65535), Some(0), Some(1)]
+        );
+    }
+
+    #[test]
+    fn straggler_after_release_is_dropped() {
+        let mut j = Jitter::new();
+        run(&mut j, &[10, 12, 13, 14]);
+        assert_eq!(run(&mut j, &[11]), []);
+    }
+
+    #[test]
+    fn big_jump_starts_over_instead_of_emitting_a_window_of_gaps() {
+        let mut j = Jitter::new();
+        run(&mut j, &[10]);
+        // Measured from 11, the frame it is now waiting for, not from 10.
+        let far = 11 + SLOTS as u16;
+        assert_eq!(run(&mut j, &[far, far + 1]), [Some(far), Some(far + 1)]);
+    }
+
+    #[test]
+    fn gap_counts_the_hole() {
+        assert_eq!(gap(10, 10), 0);
+        assert_eq!(gap(10, 13), 3);
+    }
+
+    #[test]
+    fn gap_survives_the_wrap() {
+        assert_eq!(gap(65535, 0), 1);
+        assert_eq!(gap(65534, 2), 4);
+    }
+
+    #[test]
+    fn gap_ignores_a_late_packet() {
+        assert_eq!(gap(10, 9), 0);
+        assert_eq!(gap(0, 65535), 0);
+    }
+
+    #[test]
+    fn frame_without_a_room_is_plain() {
+        let h = header(5);
+        let f = frame(None, &h, b"hello").unwrap();
+        assert_eq!(&f[..HEADER_LEN], &h);
+        assert_eq!(&f[HEADER_LEN..], b"hello");
+    }
+
+    #[test]
+    fn frame_with_a_room_opens_again() {
+        let room = room::Room::new("amber-flint").unwrap();
+        let h = header(5);
+        let f = frame(Some(&room), &h, b"hello").unwrap();
+        assert_eq!(&f[..HEADER_LEN], &h);
+        assert_eq!(room.open(&h, &f[HEADER_LEN..]).unwrap(), b"hello");
+    }
 }
