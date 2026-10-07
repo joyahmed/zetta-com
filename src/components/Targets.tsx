@@ -107,12 +107,12 @@ export const Targets = ({
 					const on = members.filter(p => p.live);
 					return (
 						<Chip
-							key={GROUP + g.name}
+							key={GROUP + g.id}
 							{...{
 								label: g.name,
 								live: on.length > 0,
-								selected: target === GROUP + g.name,
-								onClick: () => onTarget(GROUP + g.name),
+								selected: target === GROUP + g.id,
+								onClick: () => onTarget(GROUP + g.id),
 								title: `${on.length} of ${g.members.length} live: ${members.map(p => p.name).join(', ')}`
 							}}
 						/>

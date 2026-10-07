@@ -213,7 +213,13 @@ pub struct Handle {
     /// heard each other would each wait for the other to speak first and
     /// neither ever would.
     targets: Arc<Mutex<Targets>>,
-    /// Everyone live, one machine, or a group.
+    /// Everyone live, one machine, a group, or nobody.
+    ///
+    /// Shared, not owned: the app holds this one lock for its whole life and
+    /// hands it to every transport it builds (see `state::TargetState`). It
+    /// used to be created here, as everyone, so every restart — a passphrase,
+    /// a new microphone, a PC added by hand — quietly re-aimed whatever you
+    /// had chosen at the whole room. Nothing in this module writes it.
     ///
     /// Sending to one person needs no field in the header and no change to the
     /// wire format, because every send is already a unicast to each recipient
@@ -292,23 +298,6 @@ impl Handle {
             Err(e) => e.into_inner(),
         };
         *t = Targets { known, live };
-    }
-
-    /// Direct everything at one machine, or at everyone when `None`.
-    pub fn set_target(&self, addr: Option<SocketAddr>) {
-        self.set_aim(match addr {
-            Some(a) => Aim::One(a),
-            None => Aim::All,
-        });
-    }
-
-    /// Direct everything at a group, or anything else `Aim` can say.
-    pub fn set_aim(&self, aim: Aim) {
-        let mut t = match self.target.lock() {
-            Ok(t) => t,
-            Err(e) => e.into_inner(),
-        };
-        *t = aim;
     }
 
     /// Who a send goes to right now. See `pick` for the rules.
@@ -446,15 +435,22 @@ impl Handle {
         stamped_within(&self.last_audio, addr, TALKING_TIMEOUT)
     }
 
-    /// Whoever sent voice most recently, however long ago. `None` until
-    /// somebody has spoken. For the reply key: the person to answer is the last
-    /// one heard, even if they finished a minute ago.
+    /// Whoever sent voice most recently, however long ago, among the machines
+    /// still present. `None` until somebody has spoken, and `None` again once
+    /// everyone who has spoken has gone. For the reply key: the person to
+    /// answer is the last one heard, even if they finished a minute ago.
+    ///
+    /// Present means heard within `HEARD_TIMEOUT`, the roster's own rule. It
+    /// used to be the newest entry, full stop — and `last_audio` is never
+    /// pruned, so F7 aimed at a PC switched off an hour ago, opened the
+    /// microphone, and sent to nobody. The aim is kept after release, so the
+    /// plain talk key went on sending to nobody too.
     pub fn last_speaker(&self) -> Option<SocketAddr> {
-        let map = match self.last_audio.lock() {
-            Ok(m) => m,
-            Err(e) => e.into_inner(),
+        let spoke = match self.last_audio.lock() {
+            Ok(m) => m.clone(),
+            Err(e) => e.into_inner().clone(),
         };
-        newest(&map)
+        newest_where(&spoke, |a| self.heard_within(a, HEARD_TIMEOUT))
     }
 
     /// Send a line of text to everyone live.
@@ -660,6 +656,10 @@ pub enum Aim {
     All,
     One(SocketAddr),
     Group(Vec<SocketAddr>),
+    /// Aimed on purpose at no one: the group you had picked was deleted.
+    /// A variant of its own rather than an empty group, so the log says what
+    /// happened instead of "0 of 0 members live".
+    Nobody,
 }
 
 /// Who a send goes to: whoever the aim names, and only those of them live.
@@ -673,12 +673,28 @@ fn pick(aim: &Aim, live: &[SocketAddr]) -> Vec<SocketAddr> {
         Aim::All => live.to_vec(),
         Aim::One(a) => live.iter().filter(|l| *l == a).copied().collect(),
         Aim::Group(members) => live.iter().filter(|l| members.contains(l)).copied().collect(),
+        Aim::Nobody => Vec::new(),
     }
 }
 
 /// The address with the latest stamp.
+#[cfg(test)]
 fn newest(map: &HashMap<SocketAddr, Instant>) -> Option<SocketAddr> {
-    map.iter().max_by_key(|(_, t)| **t).map(|(a, _)| *a)
+    newest_where(map, |_| true)
+}
+
+/// The address with the latest stamp among those `keep` accepts.
+///
+/// Filtered before choosing, not after: the newest speaker being gone must
+/// fall back to the newest one still here, not to nobody.
+fn newest_where(
+    map: &HashMap<SocketAddr, Instant>,
+    keep: impl Fn(SocketAddr) -> bool,
+) -> Option<SocketAddr> {
+    map.iter()
+        .filter(|(a, _)| keep(**a))
+        .max_by_key(|(_, t)| **t)
+        .map(|(a, _)| *a)
 }
 
 /// Resolve to an IPv4 address specifically.
@@ -808,6 +824,7 @@ pub fn start(
     passphrase: &str,
     local_name: &str,
     audio_in: SyncSender<(SocketAddr, Option<Vec<u8>>)>,
+    target: Arc<Mutex<Aim>>,
 ) -> Result<Handle> {
     // An address is optional now. Discovery supplies peers on a normal network;
     // this is the escape hatch for one that filters mDNS, or for a PC on
@@ -1209,7 +1226,7 @@ pub fn start(
         seq: AtomicU64::new(0),
         ts: AtomicU64::new(0),
         targets,
-        target: Arc::new(Mutex::new(Aim::All)),
+        target,
         names,
         versions,
         busy,
@@ -1389,6 +1406,24 @@ mod tests {
         assert_eq!(pick(&g, &addrs(&[2, 4])), []);
     }
 
+    #[test]
+    fn pick_nobody_is_nobody_however_many_are_live() {
+        assert_eq!(pick(&Aim::Nobody, &addrs(&[1, 2, 3])), []);
+    }
+
+    #[test]
+    fn reply_skips_a_speaker_who_has_gone() {
+        let [a, b] = [addrs(&[1])[0], addrs(&[2])[0]];
+        let t = Instant::now();
+        let mut map = HashMap::new();
+        map.insert(a, t);
+        map.insert(b, t + Duration::from_millis(5));
+        // b spoke last but is gone: answer a, who is still here.
+        assert_eq!(newest_where(&map, |x| x != b), Some(a));
+        // Everyone who spoke is gone: nobody, never a guess.
+        assert_eq!(newest_where(&map, |_| false), None);
+    }
+
     fn mine(wire: u32) -> Message {
         Message {
             id: 0,
@@ -1497,13 +1532,34 @@ mod loopback {
     fn pair(pass: &str) -> (Handle, Handle, u16) {
         let (a, b) = (free(), free());
         let (tx, _rx) = mpsc::sync_channel(64);
-        let ha = start(a, "", pass, "A", tx.clone()).unwrap();
-        let hb = start(b, "", pass, "B", tx).unwrap();
+        let aim = || Arc::new(Mutex::new(Aim::All));
+        let ha = start(a, "", pass, "A", tx.clone(), aim()).unwrap();
+        let hb = start(b, "", pass, "B", tx, aim()).unwrap();
         let addr_b: SocketAddr = format!("127.0.0.1:{b}").parse().unwrap();
         let addr_a: SocketAddr = format!("127.0.0.1:{a}").parse().unwrap();
         ha.set_targets(vec![addr_b], vec![addr_b]);
         hb.set_targets(vec![addr_a], vec![addr_a]);
         (ha, hb, b)
+    }
+
+    /// A restart builds a new transport around the same aim, so what was
+    /// chosen before it is what the new one sends to. The old transport is
+    /// dropped first, as every restart path does, to prove the choice does not
+    /// go with it.
+    #[test]
+    fn the_aim_survives_a_restart() {
+        let shared = Arc::new(Mutex::new(Aim::All));
+        let one: SocketAddr = "10.0.0.3:9001".parse().unwrap();
+        let (tx, _rx) = mpsc::sync_channel(64);
+        let port = free();
+        let first = start(port, "", "", "A", tx.clone(), shared.clone()).unwrap();
+        *shared.lock().unwrap() = Aim::One(one);
+        drop(first);
+        let second = start(port, "", "", "A", tx, shared.clone()).unwrap();
+        assert_eq!(*second.target.lock().unwrap(), Aim::One(one));
+        // And it is what a send would pick, not the old default of everyone.
+        second.set_targets(vec![one], vec![one, "10.0.0.4:9001".parse().unwrap()]);
+        assert_eq!(second.recipients(), vec![one]);
     }
 
     /// Poll until `f` is true or two seconds pass.
@@ -1539,7 +1595,7 @@ mod loopback {
     fn a_replayed_packet_shows_once_and_is_still_answered() {
         let (tx, _rx) = mpsc::sync_channel(64);
         let port_b = free();
-        let b = start(port_b, "", "", "B", tx).unwrap();
+        let b = start(port_b, "", "", "B", tx, Arc::new(Mutex::new(Aim::All))).unwrap();
         let raw = UdpSocket::bind("127.0.0.1:0").unwrap();
         raw.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
 
@@ -1562,7 +1618,7 @@ mod loopback {
     fn an_old_build_text_is_shown_and_not_answered() {
         let (tx, _rx) = mpsc::sync_channel(64);
         let port_b = free();
-        let b = start(port_b, "", "", "B", tx).unwrap();
+        let b = start(port_b, "", "", "B", tx, Arc::new(Mutex::new(Aim::All))).unwrap();
         let raw = UdpSocket::bind("127.0.0.1:0").unwrap();
         raw.set_read_timeout(Some(Duration::from_millis(500))).unwrap();
 
@@ -1604,7 +1660,7 @@ mod loopback {
     fn a_status_packet_marks_the_sender_busy_and_then_available() {
         let (tx, _rx) = mpsc::sync_channel(64);
         let port_b = free();
-        let b = start(port_b, "", "", "B", tx).unwrap();
+        let b = start(port_b, "", "", "B", tx, Arc::new(Mutex::new(Aim::All))).unwrap();
         let raw = UdpSocket::bind("127.0.0.1:0").unwrap();
         let me = raw.local_addr().unwrap();
 

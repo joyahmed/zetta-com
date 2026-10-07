@@ -8,22 +8,42 @@ export const Groups = ({ groups, peers, onSave }: GroupsProps) => {
 	const [open, setOpen] = useState<number | null>(null);
 	const [name, setName] = useState('');
 	const [members, setMembers] = useState<string[]>([]);
+	// Why the last save was refused. Shown in the editor, which stays open:
+	// closing it threw away the name you typed along with the reason it failed.
+	const [error, setError] = useState<string | null>(null);
 
 	const begin = (i: number) => {
 		setOpen(i);
 		setName(groups[i]?.name ?? '');
 		setMembers(groups[i]?.members ?? []);
+		setError(null);
+	};
+
+	const close = () => {
+		setOpen(null);
+		setError(null);
+	};
+
+	/// Close only once Rust has kept it.
+	const attempt = async (next: Group[]) => {
+		try {
+			await onSave(next);
+			close();
+		} catch (e) {
+			setError(e instanceof Error ? e.message : String(e));
+		}
 	};
 
 	const commit = async () => {
 		if (open === null) return;
-		const g = { name: name.trim(), members };
+		// The id comes along, so Rust knows this is the same group renamed and
+		// the aim stays on it. A new group has none yet; Rust gives it one.
+		const g = { id: groups[open]?.id ?? '', name: name.trim(), members };
 		const next =
 			open === groups.length
 				? [...groups, g]
 				: groups.map((x, i) => (i === open ? g : x));
-		setOpen(null);
-		await onSave(next.filter(x => x.name));
+		await attempt(next);
 	};
 
 	const toggle = (addr: string) =>
@@ -41,15 +61,26 @@ export const Groups = ({ groups, peers, onSave }: GroupsProps) => {
 				</span>
 				<input
 					value={name}
-					onChange={e => setName(e.currentTarget.value)}
+					onChange={e => {
+						setName(e.currentTarget.value);
+						setError(null);
+					}}
 					onKeyDown={e => {
 						if (e.key === 'Enter') commit();
-						if (e.key === 'Escape') setOpen(null);
+						if (e.key === 'Escape') close();
 					}}
+					aria-invalid={error !== null}
 					autoFocus
 					placeholder='Devs, Front desk…'
-					className='rounded-lg border border-line bg-surface px-3 py-1.5 text-sm outline-none focus:border-accent'
+					className={`rounded-lg border bg-surface px-3 py-1.5 text-sm outline-none ${
+						error ? 'border-danger' : 'border-line focus:border-accent'
+					}`}
 				/>
+				{error && (
+					<span role='alert' className='text-xs text-danger'>
+						{error}
+					</span>
+				)}
 			</label>
 			<div className='flex flex-col gap-1'>
 				{peers.map(p => (
@@ -89,7 +120,7 @@ export const Groups = ({ groups, peers, onSave }: GroupsProps) => {
 				</button>
 				<button
 					type='button'
-					onClick={() => setOpen(null)}
+					onClick={close}
 					className='rounded-lg px-3 py-1.5 text-xs text-muted transition hover:bg-surface'
 				>
 					Cancel
@@ -97,11 +128,7 @@ export const Groups = ({ groups, peers, onSave }: GroupsProps) => {
 				{open !== null && open < groups.length && (
 					<button
 						type='button'
-						onClick={async () => {
-							const i = open;
-							setOpen(null);
-							await onSave(groups.filter((_, j) => j !== i));
-						}}
+						onClick={() => attempt(groups.filter((_, j) => j !== open))}
 						className='ml-auto rounded-lg px-3 py-1.5 text-xs text-muted transition hover:bg-danger-soft hover:text-danger'
 					>
 						Delete
@@ -115,10 +142,10 @@ export const Groups = ({ groups, peers, onSave }: GroupsProps) => {
 		<div className='flex flex-col gap-2'>
 			{groups.map((g, i) =>
 				open === i ? (
-					<div key={g.name}>{editor}</div>
+					<div key={g.id}>{editor}</div>
 				) : (
 					<div
-						key={g.name}
+						key={g.id}
 						className='flex items-center gap-2 rounded-lg border border-line bg-sunken px-3 py-2'
 					>
 						<div className='min-w-0 flex-1'>

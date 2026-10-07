@@ -37,14 +37,27 @@ type Config = {
 	groups: Group[];
 };
 
-/// A saved set of PCs to address together. Members by address.
-type Group = { name: string; members: string[] };
+/// A saved set of PCs to address together. Members by address. `id` is what
+/// the aim holds on to, so a rename keeps it; empty for a group not yet saved,
+/// and Rust gives it one.
+type Group = { id: string; name: string; members: string[] };
 
 type GroupsProps = {
 	groups: Group[];
 	peers: Peer[];
+	/// Rejects with a plain reason — a repeated or blank name — and the editor
+	/// stays open showing it.
 	onSave: (next: Group[]) => Promise<void>;
 };
+
+/// Who you are talking to, exactly as Rust holds it. Read with `get_target`
+/// and kept current by the `target` event. `gone` is a deleted group: sends
+/// go to nobody until something else is picked, never to everyone.
+type Target =
+	| { kind: 'everyone' }
+	| { kind: 'pc'; addr: string }
+	| { kind: 'group'; id: string; name: string }
+	| { kind: 'gone'; name: string };
 
 /// One switch per sound, one volume (0 to 1) for all of them.
 type Sounds = {
@@ -120,7 +133,13 @@ type Peer = {
 	busy: boolean;
 };
 
-type TalkBarProps = { held: boolean; key_: string; to: string };
+type TalkBarProps = {
+	held: boolean;
+	key_: string;
+	to: string;
+	/// Aimed at a group that was deleted: the key reaches no one.
+	nobody?: boolean;
+};
 
 type Message = {
 	id: number;
@@ -155,7 +174,8 @@ type TargetsProps = {
 	peers: Peer[];
 	groups: Group[];
 	running: boolean;
-	/// null for everyone, `group:<name>` for a group, otherwise an address.
+	/// null for everyone, `group:<id>` for a group, otherwise an address. A
+	/// deleted group is a key nothing matches, so no chip is selected.
 	target: string | null;
 	onTarget: (addr: string | null) => void;
 	onSeeAll: () => void;

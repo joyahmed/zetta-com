@@ -30,7 +30,7 @@ import { useDevices } from './hooks/useDevices';
 import { useDnd } from './hooks/useDnd';
 import { useGroups } from './hooks/useGroups';
 import { useRoom } from './hooks/useRoom';
-import { GROUP, useTarget } from './hooks/useTarget';
+import { useTarget } from './hooks/useTarget';
 import { useTransport } from './hooks/useTransport';
 
 const App = () => {
@@ -50,17 +50,10 @@ const App = () => {
 	const { messages, send } = useMessages(running);
 	const { manual, presets, add, remove, edit, rename, reorder } =
 		useManualPeers(setError);
-	const { target, setTarget } = useTarget(setError);
-	const { groups, save: saveGroups } = useGroups(setError);
-	// Aiming at a group copies its members into Rust at that moment. So after
-	// an edit, aim again — or at everyone, if the group is gone — rather than
-	// keep sending to the list it had before.
-	const saveAndReaim = async (next: Group[]) => {
-		await saveGroups(next);
-		if (!target?.startsWith(GROUP)) return;
-		const still = next.some(g => GROUP + g.name === target);
-		await setTarget(still ? target : null);
-	};
+	const { groups, save: saveGroups } = useGroups();
+	// Rust holds the aim and re-resolves it when groups are saved, so an edit,
+	// a rename or a delete reaches it without the window aiming again.
+	const { target, key, setTarget } = useTarget(running, groups, setError);
 	const devices = useDevices(setError);
 	const room = useRoom(setError);
 	const startup = useStartup(setError);
@@ -82,25 +75,25 @@ const App = () => {
 	// Named for the talk bar and the message box, so it always says who is
 	// about to be addressed rather than leaving it to be remembered.
 	const to =
-		target === null
+		target.kind === 'everyone'
 			? 'everyone'
-			: target.startsWith(GROUP)
-				? target.slice(GROUP.length)
-				: (peers.find(p => p.addr === target)?.name ?? target);
+			: target.kind === 'group'
+				? target.name
+				: target.kind === 'gone'
+					? `nobody — the ${target.name} group was deleted`
+					: (peers.find(p => p.addr === target.addr)?.name ?? target.addr);
 
 	// Who among the people aimed at is on do-not-disturb, live ones only — a
 	// gone machine is already shown as gone. Everyone is left out on purpose:
 	// one busy PC in a room of ten is not news every time you talk to all.
 	const aimed =
-		target === null
-			? []
-			: target.startsWith(GROUP)
-				? peers.filter(p =>
-						groups
-							.find(g => GROUP + g.name === target)
-							?.members.includes(p.addr)
-					)
-				: peers.filter(p => p.addr === target);
+		target.kind === 'group'
+			? peers.filter(p =>
+					groups.find(g => g.id === target.id)?.members.includes(p.addr)
+				)
+			: target.kind === 'pc'
+				? peers.filter(p => p.addr === target.addr)
+				: [];
 	const busy = aimed.filter(p => p.live && p.busy);
 
 	return (
@@ -133,7 +126,7 @@ const App = () => {
 
 				{dnd && <DndOn {...{ onOff: () => setDnd(false) }} />}
 
-				{running && <TalkBar {...{ held, key_: 'F8', to }} />}
+				{running && <TalkBar {...{ held, key_: 'F8', to, nobody: target.kind === 'gone' }} />}
 
 				{running && busy.length > 0 && (
 					<BusyNote
@@ -149,7 +142,7 @@ const App = () => {
 						peers,
 						groups,
 						running,
-						target,
+						target: key,
 						onTarget: setTarget,
 						onSeeAll: () => setShowPeople(true)
 					}}
@@ -184,7 +177,7 @@ const App = () => {
 					{...{
 						peers,
 						running,
-						target,
+						target: key,
 						onTarget: (addr: string | null) => {
 							setTarget(addr);
 							setShowPeople(false);
@@ -293,7 +286,7 @@ const App = () => {
 						<h3 className='text-xs font-medium tracking-wide text-muted uppercase'>
 							Groups
 						</h3>
-						<Groups {...{ groups, peers, onSave: saveAndReaim }} />
+						<Groups {...{ groups, peers, onSave: saveGroups }} />
 					</div>
 
 					<div className='flex flex-col gap-2'>

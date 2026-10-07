@@ -8,7 +8,7 @@ use std::sync::atomic::Ordering;
 
 use tauri::{Manager, State};
 
-use crate::state::{DndItem, NetState, Ptt};
+use crate::state::{DndItem, NetState, Ptt, Target, TargetState};
 use crate::{audio, config, discovery, keys, net, room, session};
 
 /// Bind the socket and start audio, replacing whatever was running.
@@ -21,6 +21,7 @@ pub fn net_start(
     app: tauri::AppHandle,
     state: State<NetState>,
     ptt: State<Ptt>,
+    targets: State<TargetState>,
     port: u16,
     peer: String,
 ) -> Result<(), String> {
@@ -37,8 +38,10 @@ pub fn net_start(
     // fails with "address already in use" against ourselves.
     *guard = None;
     *guard = Some(
-        session::start(port, &peer, &manual, labels, saved_order, saved_pass, prefs, ptt.0.clone()).map_err(|e| format!("{e:#}"))?,
+        session::start(port, &peer, &manual, labels, saved_order, saved_pass, prefs, ptt.0.clone(), targets.aim.clone()).map_err(|e| format!("{e:#}"))?,
     );
+    drop(guard);
+    crate::notify::session_restart();
 
     // Saved only after a successful bind, so a setting that cannot work is
     // never the one restored at next launch.
@@ -142,6 +145,7 @@ pub fn set_passphrase(
     app: tauri::AppHandle,
     state: State<NetState>,
     ptt: State<Ptt>,
+    targets: State<TargetState>,
     passphrase: String,
 ) -> Result<Option<String>, String> {
     let mut cfg = config::load(&app).unwrap_or_default();
@@ -161,9 +165,11 @@ pub fn set_passphrase(
                 cfg.passphrase.clone(),
                 audio_prefs(&cfg),
                 ptt.0.clone(),
+                targets.aim.clone(),
             )
             .map_err(|e| format!("{e:#}"))?,
         );
+        crate::notify::session_restart();
     }
     Ok(room::code(&cfg.passphrase))
 }
@@ -208,6 +214,7 @@ pub fn set_audio_devices(
     app: tauri::AppHandle,
     state: State<NetState>,
     ptt: State<Ptt>,
+    targets: State<TargetState>,
     input: Option<String>,
     output: Option<String>,
 ) -> Result<(), String> {
@@ -229,9 +236,11 @@ pub fn set_audio_devices(
                 cfg.passphrase.clone(),
                 audio_prefs(&cfg),
                 ptt.0.clone(),
+                targets.aim.clone(),
             )
             .map_err(|e| format!("{e:#}"))?,
         );
+        crate::notify::session_restart();
     }
     Ok(())
 }
@@ -245,6 +254,7 @@ pub fn manual_peers(
     app: tauri::AppHandle,
     state: State<NetState>,
     ptt: State<Ptt>,
+    targets: State<TargetState>,
     add: Option<String>,
     remove: Option<String>,
 ) -> Result<Vec<String>, String> {
@@ -274,9 +284,10 @@ pub fn manual_peers(
     if guard.is_some() {
         *guard = None;
         *guard = Some(
-            session::start(cfg.port, &cfg.peer, &cfg.manual, cfg.labels.clone(), cfg.order.clone(), cfg.passphrase.clone(), audio_prefs(&cfg), ptt.0.clone())
+            session::start(cfg.port, &cfg.peer, &cfg.manual, cfg.labels.clone(), cfg.order.clone(), cfg.passphrase.clone(), audio_prefs(&cfg), ptt.0.clone(), targets.aim.clone())
                 .map_err(|e| format!("{e:#}"))?,
         );
+        crate::notify::session_restart();
     }
     Ok(cfg.manual)
 }
@@ -354,69 +365,99 @@ pub fn set_label(
     Ok(())
 }
 
+/// The one way the aim changes. Every path goes through here — a chip in the
+/// window, a global key, a group being saved — so none of them can set what
+/// the socket sends to and forget to tell the window, which is how the talk
+/// bar came to say one name while the keys were talking to another.
+///
+/// Resolves against the groups on disk, stores both the choice and the
+/// addresses, and emits `target` with the choice as it now stands. Works with
+/// the transport stopped: the choice is kept, and Start sends to it.
+pub fn apply_target(app: &tauri::AppHandle, target: Target) {
+    let groups = config::load(app).unwrap_or_default().groups;
+    let (target, aim) = crate::state::resolve(&target, &groups);
+    let state = app.state::<TargetState>();
+    {
+        let mut t = match state.target.lock() {
+            Ok(t) => t,
+            Err(e) => e.into_inner(),
+        };
+        let mut a = match state.aim.lock() {
+            Ok(a) => a,
+            Err(e) => e.into_inner(),
+        };
+        *t = target.clone();
+        *a = aim;
+    }
+    crate::notify::target(&target);
+}
+
+/// Who you are talking to right now. Read by the window when it loads and
+/// whenever the transport starts or stops; the `target` event covers the rest.
+#[tauri::command]
+pub fn get_target(targets: State<TargetState>) -> Target {
+    match targets.target.lock() {
+        Ok(t) => t.clone(),
+        Err(e) => e.into_inner().clone(),
+    }
+}
+
 /// Aim voice and text at one machine, or at everyone when `addr` is null.
 ///
 /// This is the whole of per-person targeting: every send is already a unicast
 /// to each recipient in turn, so addressing one person is a shorter list rather
 /// than a different protocol.
 #[tauri::command]
-pub fn set_target(state: State<NetState>, addr: Option<String>) -> Result<(), String> {
-    let parsed = match addr.as_deref().map(str::trim).filter(|a| !a.is_empty()) {
-        Some(a) => Some(net::resolve_v4(a).map_err(|e| format!("{e:#}"))?),
-        None => None,
+pub fn set_target(app: tauri::AppHandle, addr: Option<String>) -> Result<(), String> {
+    let target = match addr.as_deref().map(str::trim).filter(|a| !a.is_empty()) {
+        Some(a) => Target::Pc {
+            addr: net::resolve_v4(a).map_err(|e| format!("{e:#}"))?.to_string(),
+        },
+        None => Target::Everyone,
     };
-    if let Some(s) = state.0.lock().map_err(|e| e.to_string())?.as_ref() {
-        s.set_target(parsed);
-    }
+    apply_target(&app, target);
     Ok(())
 }
 
-/// Aim at a saved group, by name. Members are read from the config at the
-/// moment of aiming, so an edit to the group takes effect the next time it is
-/// picked. A member address that no longer parses is skipped, not fatal: one
-/// stale entry must not make the whole group unreachable.
+/// Aim at a saved group, by its id. Members are read from the config now and
+/// again whenever the groups are saved, so an edit applies without aiming
+/// again, and a rename keeps the aim.
 #[tauri::command]
-pub fn set_target_group(
-    app: tauri::AppHandle,
-    state: State<NetState>,
-    name: String,
-) -> Result<(), String> {
+pub fn set_target_group(app: tauri::AppHandle, id: String) -> Result<(), String> {
     let cfg = config::load(&app).unwrap_or_default();
     let group = cfg
         .groups
         .iter()
-        .find(|g| g.name == name)
-        .ok_or_else(|| format!("no group called {name}"))?;
-    let members = group
-        .members
-        .iter()
-        .filter_map(|m| net::resolve_v4(m).ok())
-        .collect();
-    if let Some(s) = state.0.lock().map_err(|e| e.to_string())?.as_ref() {
-        s.set_group(members);
-    }
+        .find(|g| g.id == id)
+        .ok_or_else(|| "That group no longer exists.".to_string())?;
+    apply_target(
+        &app,
+        Target::Group {
+            id: group.id.clone(),
+            name: group.name.clone(),
+        },
+    );
     Ok(())
 }
 
-/// Replace the saved groups. Names are trimmed, blanks and repeats dropped,
-/// and the cleaned list is returned so the window shows what was kept.
+/// Replace the saved groups, or refuse with a reason the window can show.
+///
+/// A blank or repeated name is an error, not something to drop quietly — see
+/// `config::clean_groups`. Returns what was saved, ids and all, so the window
+/// shows what Rust kept rather than what it sent. Then the aim is resolved
+/// again, so a group you are talking to follows its edit: new members are
+/// heard at once, a rename keeps it selected, and deleting it aims at nobody.
 #[tauri::command]
 pub fn set_groups(
     app: tauri::AppHandle,
+    targets: State<TargetState>,
     groups: Vec<config::Group>,
 ) -> Result<Vec<config::Group>, String> {
     let mut cfg = config::load(&app).unwrap_or_default();
-    let mut clean: Vec<config::Group> = Vec::new();
-    for mut g in groups {
-        g.name = g.name.trim().to_string();
-        if g.name.is_empty() || clean.iter().any(|c| c.name == g.name) {
-            continue;
-        }
-        g.members.dedup();
-        clean.push(g);
-    }
-    cfg.groups = clean;
+    cfg.groups = config::clean_groups(groups)?;
     config::save(&app, &cfg).map_err(|e| format!("{e:#}"))?;
+    let current = get_target(targets);
+    apply_target(&app, current);
     Ok(cfg.groups)
 }
 

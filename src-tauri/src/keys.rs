@@ -289,18 +289,28 @@ pub fn toggle(app: &tauri::AppHandle, mind_focus: bool) {
 }
 
 /// Point everything at one machine, or at everyone when `None`.
+///
+/// Through the same setter the window uses, which tells the window. This used
+/// to write the session's aim directly, so after Ctrl+2 or F7 the chips, the
+/// talk bar and the message box all went on naming whoever was picked before —
+/// and the next typed message went somewhere the screen did not say.
 fn aim(app: &tauri::AppHandle, addr: Option<std::net::SocketAddr>) {
-    if let Ok(g) = app.state::<NetState>().0.lock() {
-        if let Some(s) = g.as_ref() {
-            s.set_target(addr);
-        }
-    }
+    let target = match addr {
+        Some(a) => crate::state::Target::Pc {
+            addr: a.to_string(),
+        },
+        None => crate::state::Target::Everyone,
+    };
+    crate::commands::apply_target(app, target);
 }
 
 /// Open or close the microphone, and tell the window when that changed.
 ///
-/// Only on a change: a held key repeats its press, and a click per repeat
-/// would be a rattle.
+/// Only on a change. The pinned global-hotkey (0.8) does not deliver key
+/// repeats on Windows, X11 or macOS, so a held key reaches `dispatch` as one
+/// press and one release; the guard is defensive, so that a crate update that
+/// starts passing repeats through cannot turn a held key into a rattle of
+/// clicks.
 fn hold(ptt: &AtomicBool, pressed: bool) {
     if ptt.swap(pressed, Ordering::Relaxed) != pressed {
         crate::notify::talk_key(pressed);
@@ -369,8 +379,10 @@ pub fn dispatch(
         }
 
         // Voice only decides who spoke last; a text message does not. Nobody
-        // heard yet, or the last speaker since gone offline, opens no
-        // microphone — the same as an empty slot, never a fallback to everyone.
+        // heard yet, or everyone who spoke since gone offline, opens no
+        // microphone and leaves the aim alone — the same as an empty slot,
+        // never a fallback to everyone. `last_speaker` only answers with a
+        // machine that is still present; see it for the bug that cost.
         Action::Reply => {
             if pressed {
                 let last = app
@@ -384,7 +396,7 @@ pub fn dispatch(
                         aim(app, Some(addr));
                         eprintln!("[keys] replying to {addr}");
                     }
-                    None => return eprintln!("[keys] nobody to reply to yet"),
+                    None => return eprintln!("[keys] nobody present to reply to"),
                 }
             }
             hold(ptt, pressed);

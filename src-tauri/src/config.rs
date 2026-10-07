@@ -165,8 +165,78 @@ pub struct Config {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Group {
+    /// Who the group is, as opposed to what it is called.
+    ///
+    /// An id rather than the name, because the aim follows the group: renaming
+    /// "Devs" to "Dev team" while it is selected must keep talking to the same
+    /// people. Keyed by name, a rename looked exactly like a delete plus an add,
+    /// and the window fell back to everyone. Carrying a rename through as an
+    /// extra argument would have worked for one edit at a time and for nothing
+    /// else — an id survives any edit, from anywhere, without being told.
+    ///
+    /// Empty in a config written before groups had one; `load` fills it in and
+    /// writes it back, so it is stable from the first launch that reads it.
+    #[serde(default)]
+    pub id: String,
     pub name: String,
     pub members: Vec<String>,
+}
+
+/// A fresh group id: eight random bytes as hex. Random rather than counted,
+/// because two windows — or a hand-edited file — must never mint the same one.
+pub fn new_group_id() -> String {
+    let mut b = [0u8; 8];
+    if getrandom::fill(&mut b).is_err() {
+        // Practically unreachable, and still worth an id: the clock is unique
+        // enough among the handful of groups one machine has.
+        let n = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or_default();
+        b = (n as u64).to_le_bytes();
+    }
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+/// Give every group without an id one. True when anything changed, so the
+/// caller knows the file needs writing back.
+pub fn fill_group_ids(groups: &mut [Group]) -> bool {
+    let mut changed = false;
+    for g in groups.iter_mut().filter(|g| g.id.trim().is_empty()) {
+        g.id = new_group_id();
+        changed = true;
+    }
+    changed
+}
+
+/// Check and tidy the groups the window wants saved.
+///
+/// Refuses rather than repairs. This used to drop a blank name or a repeat
+/// silently — so renaming B to "Devs", when A was already "Devs", deleted B and
+/// everyone in it, and the window showed it vanish with no word why. A plain
+/// error keeps the editor open with the name still in it.
+///
+/// Names compare without case, since "devs" and "Devs" side by side in the
+/// strip are two chips nobody can tell apart. Members are sorted and deduped:
+/// `dedup` alone only removes neighbours, and the window adds them in click
+/// order.
+pub fn clean_groups(groups: Vec<Group>) -> std::result::Result<Vec<Group>, String> {
+    let mut clean: Vec<Group> = Vec::new();
+    for mut g in groups {
+        g.name = g.name.trim().to_string();
+        if g.name.is_empty() {
+            return Err("A group needs a name.".into());
+        }
+        let lower = g.name.to_lowercase();
+        if clean.iter().any(|c| c.name.to_lowercase() == lower) {
+            return Err(format!("There is already a group called {}.", g.name));
+        }
+        g.members.sort();
+        g.members.dedup();
+        clean.push(g);
+    }
+    fill_group_ids(&mut clean);
+    Ok(clean)
 }
 
 /// One switch per sound and one volume for all of them.
@@ -319,6 +389,16 @@ pub fn load(app: &AppHandle) -> Option<Config> {
                 c.port = DEFAULT_PORT;
             }
 
+            // Groups saved before they had ids get them now, and the file is
+            // written at once. Minting them on every read instead would give
+            // the same group a new id each time, and an aim that held the old
+            // one would find its group gone.
+            if fill_group_ids(&mut c.groups) {
+                if let Err(e) = save(app, &c) {
+                    eprintln!("[config] group ids not saved: {e:#}");
+                }
+            }
+
             Some(c)
         }
         Err(e) => {
@@ -353,6 +433,55 @@ mod tests {
         let old = r#"{"port":9001,"peer":"","manual":[],"talkShortcut":"F8"}"#;
         let cfg: Config = serde_json::from_str(old).unwrap();
         assert!(cfg.volumes.is_empty());
+    }
+
+    #[test]
+    fn groups_saved_before_ids_existed_load_and_get_one() {
+        let old = r#"{"port":9001,"peer":"","manual":[],"talkShortcut":"F8",
+            "groups":[{"name":"Devs","members":["10.0.0.1:9001"]},
+                      {"name":"Desk","members":[]}]}"#;
+        let mut cfg: Config = serde_json::from_str(old).unwrap();
+        assert_eq!(cfg.groups[0].name, "Devs");
+        assert!(cfg.groups[0].id.is_empty());
+        assert!(fill_group_ids(&mut cfg.groups));
+        assert!(!cfg.groups[0].id.is_empty());
+        assert_ne!(cfg.groups[0].id, cfg.groups[1].id);
+        // A second pass changes nothing, so ids are stable once written.
+        let before = cfg.groups.clone();
+        assert!(!fill_group_ids(&mut cfg.groups));
+        assert_eq!(cfg.groups, before);
+    }
+
+    fn group(id: &str, name: &str, members: &[&str]) -> Group {
+        Group {
+            id: id.into(),
+            name: name.into(),
+            members: members.iter().map(|m| m.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn a_repeated_name_is_refused_not_dropped() {
+        let e = clean_groups(vec![group("a", "Devs", &[]), group("b", " devs ", &[])]);
+        assert_eq!(e.unwrap_err(), "There is already a group called devs.");
+    }
+
+    #[test]
+    fn a_blank_name_is_refused() {
+        assert!(clean_groups(vec![group("a", "  ", &[])]).is_err());
+    }
+
+    #[test]
+    fn members_are_deduped_even_when_not_adjacent() {
+        let g = clean_groups(vec![group("a", "Devs", &["x", "y", "x"])]).unwrap();
+        assert_eq!(g[0].members, ["x", "y"]);
+        assert_eq!(g[0].id, "a");
+    }
+
+    #[test]
+    fn a_new_group_gets_an_id() {
+        let g = clean_groups(vec![group("", "Desk", &[])]).unwrap();
+        assert_eq!(g[0].id.len(), 16);
     }
 
     #[test]

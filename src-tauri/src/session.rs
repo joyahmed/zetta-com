@@ -80,16 +80,6 @@ impl Session {
         self.net.last_speaker()
     }
 
-    /// Aim voice and text at a group: the addresses of its members.
-    pub fn set_group(&self, members: Vec<SocketAddr>) {
-        self.net.set_aim(net::Aim::Group(members));
-    }
-
-    /// Aim voice and text at one machine, or at everyone when `None`.
-    pub fn set_target(&self, addr: Option<SocketAddr>) {
-        self.net.set_target(addr);
-    }
-
     /// The log, with addresses replaced by names. `net` stores who sent what as
     /// an address because it has no idea who anybody is; putting a name on it
     /// is the session's job, since it is the only layer that holds both the
@@ -262,6 +252,9 @@ pub fn start(
     passphrase: String,
     audio_prefs: audio::Prefs,
     transmit: Arc<AtomicBool>,
+    // Who to send to, kept by the app across every restart. The session has
+    // no way to change it, on purpose: see `state::TargetState`.
+    aim: Arc<Mutex<net::Aim>>,
 ) -> Result<Session> {
     // The typed Address is just another manual peer. It used to be handled
     // separately: seeded into the send list at bind and then quietly dropped a
@@ -282,6 +275,7 @@ pub fn start(
         &passphrase,
         &discovery::local_name(),
         pipeline.frames_in.clone(),
+        aim,
     )?);
 
     let stop = Arc::new(AtomicBool::new(false));

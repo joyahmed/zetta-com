@@ -153,10 +153,11 @@ export const DEMO_MESSAGES: Message[] = ([
 /// be live while somebody in it is not.
 export const DEMO_GROUPS: Group[] = [
 	{
+		id: 'demo-devs',
 		name: 'Devs',
 		members: ['192.168.0.142:9001', '192.168.0.151:9001', '192.168.0.159:9001', '192.168.0.167:9001']
 	},
-	{ name: 'Front desk', members: ['192.168.0.118:9001', '192.168.0.126:9001'] }
+	{ id: 'demo-desk', name: 'Front desk', members: ['192.168.0.118:9001', '192.168.0.126:9001'] }
 ];
 
 /// One PC turned up, so a screenshot of its Edit panel shows a value other than

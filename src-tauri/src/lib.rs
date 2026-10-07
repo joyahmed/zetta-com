@@ -44,6 +44,7 @@ fn bring_up(
     port: u16,
     cfg: &config::Config,
     ptt: &Arc<AtomicBool>,
+    aim: Arc<Mutex<net::Aim>>,
 ) -> Option<session::Session> {
     match session::start(
         port,
@@ -54,9 +55,11 @@ fn bring_up(
         cfg.passphrase.clone(),
         commands::audio_prefs(cfg),
         ptt.clone(),
+        aim,
     ) {
         Ok(s) => {
             eprintln!("[net] auto-started on {port} -> {}", cfg.peer);
+            notify::session_restart();
             Some(s)
         }
         Err(e) => {
@@ -167,6 +170,7 @@ pub fn run() {
             commands::send_text,
             commands::messages,
             commands::manual_peers,
+            commands::get_target,
             commands::set_target,
             commands::set_target_group,
             commands::set_groups,
@@ -249,6 +253,11 @@ pub fn run() {
             app.manage(Ptt(ptt.clone()));
             app.manage(Shortcuts(listing.clone()));
             app.manage(BindingsState(bindings.clone()));
+            // Before any transport exists, so the commands can aim while
+            // stopped and every transport built from here shares the one aim.
+            let targets = state::TargetState::new();
+            let aim = targets.aim.clone();
+            app.manage(targets);
 
             // Auto-start from the saved settings. A PC whose job is to listen
             // must come up receiving without anyone clicking anything: it may
@@ -276,12 +285,13 @@ pub fn run() {
             // exist from the moment the window loads either way.
             let delay = if autostarted { cfg.start_delay } else { 0 };
             if delay == 0 {
-                app.manage(NetState(Mutex::new(bring_up(port, &cfg, &ptt))));
+                app.manage(NetState(Mutex::new(bring_up(port, &cfg, &ptt, aim))));
             } else {
                 app.manage(NetState(Mutex::new(None)));
                 eprintln!("[net] waiting {delay}s for the network before binding");
                 let handle = app.handle().clone();
                 let ptt = ptt.clone();
+                let aim = aim.clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_secs(delay));
                     // Re-read rather than reusing the config from launch: the
@@ -301,7 +311,7 @@ pub fn run() {
                     if guard.is_some() {
                         return eprintln!("[net] already started by hand — not auto-starting");
                     }
-                    *guard = bring_up(port, &cfg, &ptt);
+                    *guard = bring_up(port, &cfg, &ptt, aim);
                 });
             }
 
