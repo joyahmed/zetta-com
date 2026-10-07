@@ -36,6 +36,9 @@ written.
 
 ## Phase A — Tests and a gate before release
 
+> **Status:** built — `d97e87c`, `eb8f976`. CI green. Not in a release yet.
+
+
 Everything below lives in `net.rs`, `room.rs`, `audio.rs` and the workflows, and
 changes no behaviour. It goes first because Phases B–E all edit `net.rs`, and
 they should land on top of tests that would notice a break.
@@ -89,6 +92,9 @@ Tests go in `#[cfg(test)] mod tests` inside each file, so private types like
 
 ## Phase B — Two-way talk and reply
 
+> **Status:** built — `71dfa58`, `0de5c6f`. CI green. Not in a release yet; not yet heard on two machines.
+
+
 Same files: `audio.rs` playback, `keys.rs`, `net.rs`, `config.rs`, Settings UI.
 
 ### B.1 — Headphones switch (`audio.rs:801-807`, `audio.rs:843-846`)
@@ -113,6 +119,9 @@ Same files: `audio.rs` playback, `keys.rs`, `net.rs`, `config.rs`, Settings UI.
 ---
 
 ## Phase C — Sound alerts
+
+> **Status:** built — `07db99c`. CI green. Not in a release yet; tones not yet heard on real speakers.
+
 
 Same files: `src/utils/chime.ts` (becomes a small set of sounds), `net.rs` receive loop, `keys.rs`, `config.rs`, Settings UI.
 
@@ -147,6 +156,10 @@ output, not the intercom's chosen device. That was chosen on purpose
 
 ## Phase D — "Heard by" receipts for text
 
+> **Status:** built — `11fb8cf`. Tested over real UDP on loopback. Not in a release yet.
+> The UI says `✓` / `✓ 3/6`, not "heard by": shorter, so lines do not wrap.
+
+
 Same files: `net.rs` (`send_text` `:402`, receive `:884`, `Message` `:150`), `Messages.tsx`, `types.d.ts`.
 
 ### D.1 — Wire
@@ -171,11 +184,14 @@ Same files: `net.rs` (`send_text` `:402`, receive `:884`, `Message` `:150`), `Me
 
 ## Phase E — Groups
 
+> **Status:** built (commit below). Decided 2026-10-07: **saved groups**. Not in a release yet.
+
+
 Same files: `net.rs` (`set_target` `:260`, `recipients` `:274`), `keys.rs` `aim` `:286`, `config.rs`, `Targets.tsx`.
 
 ### E.1 — ⚠️ Decision needed before starting
 
-- [ ] Are groups **fixed lists** ("Devs" = these 4 PCs, saved) or **picked on the spot** (tick 3 people, talk)? Saved lists are what "directing staff" usually needs; picking is less to build. **Stop here until answered.**
+- [x] Are groups **fixed lists** ("Devs" = these 4 PCs, saved) or **picked on the spot** (tick 3 people, talk)? ✅ Answered 2026-10-07: saved lists.
 
 ### E.2 — Build (assuming saved lists)
 

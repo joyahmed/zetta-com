@@ -45,6 +45,7 @@ impl Default for Config {
             headphones: false,
             sounds: Sounds::default(),
             watched: Vec::new(),
+            groups: Vec::new(),
         }
     }
 }
@@ -148,6 +149,18 @@ pub struct Config {
     /// every time anyone shuts down, and nobody listens to that for a week.
     #[serde(default)]
     pub watched: Vec<String>,
+
+    /// Named sets of machines to talk or write to together — "Devs", "Front
+    /// desk". By address, like labels, so a renamed PC stays in its groups.
+    #[serde(default)]
+    pub groups: Vec<Group>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Group {
+    pub name: String,
+    pub members: Vec<String>,
 }
 
 /// One switch per sound and one volume for all of them.

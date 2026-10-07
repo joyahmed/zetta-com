@@ -165,6 +165,8 @@ pub fn run() {
             commands::messages,
             commands::manual_peers,
             commands::set_target,
+            commands::set_target_group,
+            commands::set_groups,
             commands::set_label,
             commands::audio_devices,
             commands::set_audio_devices,

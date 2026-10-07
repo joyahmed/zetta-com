@@ -141,6 +141,16 @@ export const DEMO_MESSAGES: Message[] = ([
 	{ id: 13, from: 'Salman', text: 'Smoke passed, deploying', mine: false, at: at(9, 41) }
 ] as Omit<Message, 'to' | 'heard'>[]).map(withReceipts);
 
+/// Two teams, one with a member who is offline, so the chip shows a group can
+/// be live while somebody in it is not.
+export const DEMO_GROUPS: Group[] = [
+	{
+		name: 'Devs',
+		members: ['192.168.0.142:9001', '192.168.0.151:9001', '192.168.0.159:9001', '192.168.0.167:9001']
+	},
+	{ name: 'Front desk', members: ['192.168.0.118:9001', '192.168.0.126:9001'] }
+];
+
 export const DEMO_ROOM = {
 	passphrase: 'cedar-harbor-quartz-thistle-ivory-9f4c2ab7e1d05836',
 	code: '7B2E'

@@ -371,6 +371,55 @@ pub fn set_target(state: State<NetState>, addr: Option<String>) -> Result<(), St
     Ok(())
 }
 
+/// Aim at a saved group, by name. Members are read from the config at the
+/// moment of aiming, so an edit to the group takes effect the next time it is
+/// picked. A member address that no longer parses is skipped, not fatal: one
+/// stale entry must not make the whole group unreachable.
+#[tauri::command]
+pub fn set_target_group(
+    app: tauri::AppHandle,
+    state: State<NetState>,
+    name: String,
+) -> Result<(), String> {
+    let cfg = config::load(&app).unwrap_or_default();
+    let group = cfg
+        .groups
+        .iter()
+        .find(|g| g.name == name)
+        .ok_or_else(|| format!("no group called {name}"))?;
+    let members = group
+        .members
+        .iter()
+        .filter_map(|m| net::resolve_v4(m).ok())
+        .collect();
+    if let Some(s) = state.0.lock().map_err(|e| e.to_string())?.as_ref() {
+        s.set_group(members);
+    }
+    Ok(())
+}
+
+/// Replace the saved groups. Names are trimmed, blanks and repeats dropped,
+/// and the cleaned list is returned so the window shows what was kept.
+#[tauri::command]
+pub fn set_groups(
+    app: tauri::AppHandle,
+    groups: Vec<config::Group>,
+) -> Result<Vec<config::Group>, String> {
+    let mut cfg = config::load(&app).unwrap_or_default();
+    let mut clean: Vec<config::Group> = Vec::new();
+    for mut g in groups {
+        g.name = g.name.trim().to_string();
+        if g.name.is_empty() || clean.iter().any(|c| c.name == g.name) {
+            continue;
+        }
+        g.members.dedup();
+        clean.push(g);
+    }
+    cfg.groups = clean;
+    config::save(&app, &cfg).map_err(|e| format!("{e:#}"))?;
+    Ok(cfg.groups)
+}
+
 /// The message log, newest last. Polled with everything else.
 #[tauri::command]
 pub fn messages(state: State<NetState>) -> Result<Vec<net::Message>, String> {

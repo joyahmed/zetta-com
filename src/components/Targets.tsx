@@ -1,3 +1,4 @@
+import { GROUP } from '../hooks/useTarget';
 import { Dot } from './Dot';
 
 /// Who you are addressing — one row, scrolling sideways.
@@ -50,6 +51,7 @@ const Chip = ({
 
 export const Targets = ({
 	peers,
+	groups,
 	running,
 	target,
 	onTarget,
@@ -86,6 +88,26 @@ export const Targets = ({
 						onClick: () => onTarget(null)
 					}}
 				/>
+
+				{/* Groups next, before single PCs: picking a team is a broader
+				    choice than picking a person, and the strip reads widest to
+				    narrowest. Live when anyone in it is. */}
+				{groups.map(g => {
+					const members = peers.filter(p => g.members.includes(p.addr));
+					const on = members.filter(p => p.live);
+					return (
+						<Chip
+							key={GROUP + g.name}
+							{...{
+								label: g.name,
+								live: on.length > 0,
+								selected: target === GROUP + g.name,
+								onClick: () => onTarget(GROUP + g.name),
+								title: `${on.length} of ${g.members.length} live: ${members.map(p => p.name).join(', ')}`
+							}}
+						/>
+					);
+				})}
 
 				{peers.map((p, i) => (
 					<Chip

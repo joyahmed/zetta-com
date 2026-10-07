@@ -80,6 +80,11 @@ impl Session {
         self.net.last_speaker()
     }
 
+    /// Aim voice and text at a group: the addresses of its members.
+    pub fn set_group(&self, members: Vec<SocketAddr>) {
+        self.net.set_aim(net::Aim::Group(members));
+    }
+
     /// Aim voice and text at one machine, or at everyone when `None`.
     pub fn set_target(&self, addr: Option<SocketAddr>) {
         self.net.set_target(addr);

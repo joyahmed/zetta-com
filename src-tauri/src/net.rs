@@ -202,14 +202,15 @@ pub struct Handle {
     /// heard each other would each wait for the other to speak first and
     /// neither ever would.
     targets: Arc<Mutex<Targets>>,
-    /// One recipient, or everyone live when `None`.
+    /// Everyone live, one machine, or a group.
     ///
     /// Sending to one person needs no field in the header and no change to the
     /// wire format, because every send is already a unicast to each recipient
-    /// in turn — addressing one is simply a shorter list. What the receiver
-    /// cannot tell from this alone is whether it was addressed personally, and
-    /// that is worth adding when it matters.
-    target: Arc<Mutex<Option<SocketAddr>>>,
+    /// in turn — addressing one is simply a shorter list, and a group is a
+    /// list of a different length. What the receiver cannot tell from this
+    /// alone is whether it was addressed personally, and that is worth adding
+    /// when it matters.
+    target: Arc<Mutex<Aim>>,
     /// When each address was last heard from — the evidence behind presence.
     ///
     /// This is what makes "live" an observation rather than an assumption.
@@ -277,19 +278,22 @@ impl Handle {
 
     /// Direct everything at one machine, or at everyone when `None`.
     pub fn set_target(&self, addr: Option<SocketAddr>) {
+        self.set_aim(match addr {
+            Some(a) => Aim::One(a),
+            None => Aim::All,
+        });
+    }
+
+    /// Direct everything at a group, or anything else `Aim` can say.
+    pub fn set_aim(&self, aim: Aim) {
         let mut t = match self.target.lock() {
             Ok(t) => t,
             Err(e) => e.into_inner(),
         };
-        *t = addr;
+        *t = aim;
     }
 
-    /// Who a send goes to right now: the chosen one if it is still live, or
-    /// everyone.
-    ///
-    /// The liveness check matters — picking somebody and then watching them
-    /// switch their PC off should not silently send into the void, so a target
-    /// that has gone away falls back rather than swallowing the message.
+    /// Who a send goes to right now. See `pick` for the rules.
     fn recipients(&self) -> Vec<SocketAddr> {
         let live = {
             let t = match self.targets.lock() {
@@ -303,13 +307,19 @@ impl Handle {
                 Ok(t) => t,
                 Err(e) => e.into_inner(),
             };
-            *t
+            t.clone()
         };
-        match chosen {
-            Some(addr) if live.contains(&addr) => vec![addr],
-            Some(_) => Vec::new(),
-            None => live,
+        let to = pick(&chosen, &live);
+        if let Aim::Group(members) = &chosen {
+            if to.len() < members.len() {
+                eprintln!(
+                    "[net] group: {} of {} members live, the rest left out",
+                    to.len(),
+                    members.len()
+                );
+            }
         }
+        to
     }
 
     /// Send one encoded audio frame to everyone live. `samples` is the sender's
@@ -343,7 +353,7 @@ impl Handle {
                     "[net] talking, but sending to nobody — {} known, {} live, target {:?}",
                     t.known.len(),
                     t.live.len(),
-                    self.target.lock().ok().and_then(|g| *g)
+                    self.target.lock().ok().map(|g| g.clone())
                 );
             } else {
                 eprintln!("[net] talking to {} of them: {:?}", targets.len(), targets);
@@ -588,6 +598,29 @@ impl Recent {
         }
         self.0.push_back((from, wire));
         true
+    }
+}
+
+/// Who a send is aimed at.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum Aim {
+    #[default]
+    All,
+    One(SocketAddr),
+    Group(Vec<SocketAddr>),
+}
+
+/// Who a send goes to: whoever the aim names, and only those of them live.
+///
+/// ⛔ A target that has gone away sends to **nobody**, never to everyone.
+/// Quietly redirecting an instruction meant for one person, or for one team,
+/// to the whole room is worse than not sending it — and the log says so, since
+/// the sender sees "nobody online" against the line.
+fn pick(aim: &Aim, live: &[SocketAddr]) -> Vec<SocketAddr> {
+    match aim {
+        Aim::All => live.to_vec(),
+        Aim::One(a) => live.iter().filter(|l| *l == a).copied().collect(),
+        Aim::Group(members) => live.iter().filter(|l| members.contains(l)).copied().collect(),
     }
 }
 
@@ -1083,7 +1116,7 @@ pub fn start(
         seq: AtomicU64::new(0),
         ts: AtomicU64::new(0),
         targets,
-        target: Arc::new(Mutex::new(None)),
+        target: Arc::new(Mutex::new(Aim::All)),
         names,
         versions,
         heard,
@@ -1236,6 +1269,30 @@ mod tests {
         assert_eq!(newest(&map), Some(b));
         map.insert(a, t + Duration::from_millis(10));
         assert_eq!(newest(&map), Some(a));
+    }
+
+    fn addrs(n: &[u8]) -> Vec<SocketAddr> {
+        n.iter().map(|i| format!("10.0.0.{i}:9001").parse().unwrap()).collect()
+    }
+
+    #[test]
+    fn pick_everyone_is_everyone_live() {
+        assert_eq!(pick(&Aim::All, &addrs(&[1, 2])), addrs(&[1, 2]));
+    }
+
+    #[test]
+    fn pick_one_is_nobody_once_they_leave() {
+        let one = Aim::One(addrs(&[3])[0]);
+        assert_eq!(pick(&one, &addrs(&[1, 3])), addrs(&[3]));
+        assert_eq!(pick(&one, &addrs(&[1, 2])), []);
+    }
+
+    #[test]
+    fn pick_group_is_its_live_members_only() {
+        let g = Aim::Group(addrs(&[1, 3, 5]));
+        assert_eq!(pick(&g, &addrs(&[1, 2, 3])), addrs(&[1, 3]));
+        // Nobody from the group is on: nobody, not the room.
+        assert_eq!(pick(&g, &addrs(&[2, 4])), []);
     }
 
     fn mine(wire: u32) -> Message {

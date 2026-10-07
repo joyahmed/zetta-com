@@ -32,6 +32,16 @@ type Config = {
 	sounds: Sounds;
 	/// Addresses whose going offline and coming back plays a tone.
 	watched: string[];
+	groups: Group[];
+};
+
+/// A saved set of PCs to address together. Members by address.
+type Group = { name: string; members: string[] };
+
+type GroupsProps = {
+	groups: Group[];
+	peers: Peer[];
+	onSave: (next: Group[]) => Promise<void>;
 };
 
 /// One switch per sound, one volume (0 to 1) for all of them.
@@ -138,7 +148,9 @@ type MessagesProps = {
 /// roster, which is where addresses and liveness are legible.
 type TargetsProps = {
 	peers: Peer[];
+	groups: Group[];
 	running: boolean;
+	/// null for everyone, `group:<name>` for a group, otherwise an address.
 	target: string | null;
 	onTarget: (addr: string | null) => void;
 	onSeeAll: () => void;

@@ -7,6 +7,7 @@ import { Diagnostics } from './components/Diagnostics';
 import { Messages } from './components/Messages';
 import { Modal } from './components/Modal';
 import { Nav } from './components/Nav';
+import { Groups } from './components/Groups';
 import { Pcs } from './components/Pcs';
 import { Presets } from './components/Presets';
 import { Room } from './components/Room';
@@ -24,8 +25,9 @@ import { useShortcuts } from './hooks/useShortcuts';
 import { useSounds } from './hooks/useSounds';
 import { useStartup } from './hooks/useStartup';
 import { useDevices } from './hooks/useDevices';
+import { useGroups } from './hooks/useGroups';
 import { useRoom } from './hooks/useRoom';
-import { useTarget } from './hooks/useTarget';
+import { GROUP, useTarget } from './hooks/useTarget';
 import { useTransport } from './hooks/useTransport';
 
 const App = () => {
@@ -46,6 +48,16 @@ const App = () => {
 	const { manual, presets, add, remove, edit, rename, reorder } =
 		useManualPeers(setError);
 	const { target, setTarget } = useTarget(setError);
+	const { groups, save: saveGroups } = useGroups(setError);
+	// Aiming at a group copies its members into Rust at that moment. So after
+	// an edit, aim again — or at everyone, if the group is gone — rather than
+	// keep sending to the list it had before.
+	const saveAndReaim = async (next: Group[]) => {
+		await saveGroups(next);
+		if (!target?.startsWith(GROUP)) return;
+		const still = next.some(g => GROUP + g.name === target);
+		await setTarget(still ? target : null);
+	};
 	const devices = useDevices(setError);
 	const room = useRoom(setError);
 	const startup = useStartup(setError);
@@ -67,7 +79,9 @@ const App = () => {
 	const to =
 		target === null
 			? 'everyone'
-			: (peers.find(p => p.addr === target)?.name ?? target);
+			: target.startsWith(GROUP)
+				? target.slice(GROUP.length)
+				: (peers.find(p => p.addr === target)?.name ?? target);
 
 	return (
 		// h-screen rather than min-h-screen: the log sizes itself against the
@@ -100,6 +114,7 @@ const App = () => {
 				<Targets
 					{...{
 						peers,
+						groups,
 						running,
 						target,
 						onTarget: setTarget,
@@ -239,6 +254,13 @@ const App = () => {
 						<Sounds
 							{...{ sounds: sounds.sounds, onChoose: sounds.choose }}
 						/>
+					</div>
+
+					<div className='flex flex-col gap-2'>
+						<h3 className='text-xs font-medium tracking-wide text-muted uppercase'>
+							Groups
+						</h3>
+						<Groups {...{ groups, peers, onSave: saveAndReaim }} />
 					</div>
 
 					<div className='flex flex-col gap-2'>
