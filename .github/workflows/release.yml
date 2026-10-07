@@ -86,6 +86,9 @@ jobs:
           # Only the mac runner needs the extra triple; asking for it elsewhere
           # is a download nobody uses.
           targets: ${{ startsWith(matrix.platform, 'macos') && 'aarch64-apple-darwin' || '' }}
+          # The toolchain action installs a minimal profile; the lint gate
+          # below needs clippy named.
+          components: clippy
 
       # Keyed on the platform and the lockfile, so a dependency change busts it
       # and a source change does not. The first build is slow; the rest are not.
@@ -95,6 +98,20 @@ jobs:
           key: ${{ matrix.platform }}-${{ matrix.args }}
 
       - run: bun install
+
+      # The gate. Before these existed a release only proved the code compiled.
+      # On every platform rather than one, because the audio and shortcut code
+      # differs per platform and a test that only ever ran on Windows says
+      # nothing about the .dmg. A red step here stops this platform's upload;
+      # fail-fast stays off so the others still report.
+      - name: Typecheck
+        run: bunx tsc --noEmit
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test
+      - name: Lint
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
 
       - uses: tauri-apps/tauri-action@v0
         env:

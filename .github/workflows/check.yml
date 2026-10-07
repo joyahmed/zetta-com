@@ -1,0 +1,45 @@
+name: check
+
+# The same three gates release.yml runs before it builds, on every push, so a
+# break shows up the day it lands rather than the day somebody tags a release.
+#
+# Windows only. `cargo test` compiles the whole of Tauri, and on Linux that
+# needs the webkit and ALSA packages release.yml installs; Windows needs
+# nothing extra, and it is where the app is actually used. The release matrix
+# still runs these on every platform before anything ships.
+on:
+  push:
+    branches: [main, joy]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: './src-tauri -> target'
+
+      - run: bun install
+
+      - name: Typecheck
+        run: bunx tsc --noEmit
+
+      - name: Rust tests
+        working-directory: src-tauri
+        run: cargo test
+
+      - name: Lint
+        working-directory: src-tauri
+        run: cargo clippy --all-targets -- -D warnings
