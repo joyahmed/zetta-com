@@ -27,6 +27,8 @@ type Config = {
 	presets: Preset[];
 	/// Seconds a login start waits before binding. Zero means no wait.
 	startDelay: number;
+	/// Keep hearing others while talking. Only safe on headphones.
+	headphones: boolean;
 };
 
 type StartupProps = {
@@ -54,6 +56,8 @@ type DevicesProps = {
 	output: string;
 	onChoose: (next: { input?: string; output?: string }) => Promise<void>;
 	onRefresh: () => Promise<void>;
+	headphones: boolean;
+	onHeadphones: (on: boolean) => Promise<void>;
 };
 
 type PresetsProps = {

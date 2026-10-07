@@ -744,6 +744,24 @@ fn build_capture(
     Ok(stream)
 }
 
+/// Hear others while you talk. Off by default, and only safe with headphones.
+///
+/// The playback mute while transmitting is the whole echo strategy (see
+/// `start`); this switch turns it off for someone whose ears are not next to
+/// their microphone. It only gives two-way talk when *both* people have it on:
+/// the other side's app still mutes their speakers while they talk.
+///
+/// A process-wide static rather than one more `Arc` threaded through the six
+/// places a session starts. Like the push-to-talk flag it outlives every
+/// session, and it is read by the playback callback every 10 ms, so it has to
+/// be live — flipping it must not rebuild the audio pipeline.
+pub static HEADPHONES: AtomicBool = AtomicBool::new(false);
+
+/// Whether playback is silenced right now.
+fn muted(transmit: &AtomicBool) -> bool {
+    transmit.load(Ordering::Relaxed) && !HEADPHONES.load(Ordering::Relaxed)
+}
+
 /// `in_rx` → Opus → ring B → speakers. Owns ring B entirely.
 // Same reason as build_capture.
 #[allow(clippy::too_many_arguments)]
@@ -806,7 +824,12 @@ fn build_playback(
                     // Silent while transmitting. This is the echo prevention:
                     // without it the speakers play the far end into the open
                     // microphone and everyone hears themselves back.
-                    if out_transmit.load(Ordering::Relaxed) {
+                    if muted(&out_transmit) {
+                        // Thrown away, not held. Leaving it in the ring played
+                        // up to 160 ms of what was said *during* your sentence
+                        // the moment you let go of the key.
+                        cons.skip(cons.occupied_len());
+                        primed = false;
                         data.fill(0.0);
                         return;
                     }
@@ -845,7 +868,9 @@ fn build_playback(
                 stream_cfg,
                 move |data: &mut [i16], _: &cpal::OutputCallbackInfo| {
                     st.out_calls.fetch_add(1, Ordering::Relaxed);
-                    if out_transmit.load(Ordering::Relaxed) {
+                    if muted(&out_transmit) {
+                        cons.skip(cons.occupied_len());
+                        primed = false;
                         data.fill(0);
                         return;
                     }
@@ -937,10 +962,11 @@ fn build_playback(
                 Err(e) => eprintln!("[audio] decode from {from}: {e}"),
             }
 
-            // Mix whatever every source has ready. Half-duplex means one person
-            // should be talking at a time, but nothing enforces that until
-            // push-to-talk exists, and two people overlapping must sound like
-            // two people rather than like corruption.
+            // Mix whatever every source has ready. Push-to-talk keeps it to one
+            // person at a time in practice, but nothing stops two keys being
+            // held at once — and with headphones on that is the point — so two
+            // people overlapping must sound like two people rather than like
+            // corruption.
             loop {
                 let ready = sources
                     .values()
@@ -1267,6 +1293,18 @@ mod tests {
         let n = r.process(&[0, 100, 200, 300], &mut out);
         assert_eq!(n, 8);
         assert_eq!(&out[..n], &[0, 50, 100, 150, 200, 250, 300, 300]);
+    }
+
+    #[test]
+    fn headphones_lift_the_mute_and_nothing_else_does() {
+        let talking = AtomicBool::new(false);
+        assert!(!muted(&talking));
+        talking.store(true, Ordering::Relaxed);
+        assert!(muted(&talking));
+        HEADPHONES.store(true, Ordering::Relaxed);
+        assert!(!muted(&talking));
+        HEADPHONES.store(false, Ordering::Relaxed);
+        assert!(muted(&talking));
     }
 
     #[test]

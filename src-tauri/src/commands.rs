@@ -391,6 +391,17 @@ pub fn ptt_held(ptt: State<Ptt>) -> bool {
     ptt.0.load(Ordering::Relaxed)
 }
 
+/// Turn the headphones switch on or off. Live: the next 10 ms of playback
+/// already follows it, nothing restarts.
+#[tauri::command]
+pub fn set_headphones(app: tauri::AppHandle, on: bool) -> Result<(), String> {
+    let mut cfg = config::load(&app).unwrap_or_default();
+    cfg.headphones = on;
+    config::save(&app, &cfg).map_err(|e| format!("{e:#}"))?;
+    crate::audio::HEADPHONES.store(on, Ordering::Relaxed);
+    Ok(())
+}
+
 /// The name this machine advertises itself under, so the UI can show you which
 /// entry in everyone else's roster is you.
 #[tauri::command]

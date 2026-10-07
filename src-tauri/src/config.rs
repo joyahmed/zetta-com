@@ -42,6 +42,7 @@ impl Default for Config {
             output_device: None,
             presets: default_presets(),
             start_delay: default_start_delay(),
+            headphones: false,
         }
     }
 }
@@ -127,6 +128,13 @@ pub struct Config {
     /// watching who can read the error.
     #[serde(default = "default_start_delay")]
     pub start_delay: u64,
+
+    /// Keep hearing others while talking. Only safe on headphones: with
+    /// speakers it puts everyone's voice back into this microphone. Off unless
+    /// somebody turns it on, and per machine, because it is a fact about the
+    /// desk rather than about the room. See `audio::HEADPHONES`.
+    #[serde(default)]
+    pub headphones: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]

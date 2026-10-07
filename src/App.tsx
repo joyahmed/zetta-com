@@ -222,7 +222,9 @@ const App = () => {
 								input: devices.input,
 								output: devices.output,
 								onChoose: devices.choose,
-								onRefresh: devices.refresh
+								onRefresh: devices.refresh,
+								headphones: devices.headphones,
+								onHeadphones: devices.chooseHeadphones
 							}}
 						/>
 					</div>

@@ -157,6 +157,7 @@ pub fn run() {
             commands::local_name,
             commands::config_get,
             commands::ptt_held,
+            commands::set_headphones,
             commands::send_text,
             commands::messages,
             commands::manual_peers,
@@ -221,6 +222,7 @@ pub fn run() {
                 .build(app)?;
 
             let cfg = config::load(app.handle()).unwrap_or_default();
+            audio::HEADPHONES.store(cfg.headphones, std::sync::atomic::Ordering::Relaxed);
             keys::register_all(&app.handle().clone(), &bindings, &listing, &cfg);
             app.manage(Ptt(ptt.clone()));
             app.manage(Shortcuts(listing.clone()));

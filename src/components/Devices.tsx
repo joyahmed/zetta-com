@@ -49,7 +49,9 @@ export const Devices = ({
 	input,
 	output,
 	onChoose,
-	onRefresh
+	onRefresh,
+	headphones,
+	onHeadphones
 }: DevicesProps) => (
 	<div className='flex flex-col gap-3'>
 		<Picker
@@ -82,6 +84,29 @@ export const Devices = ({
 			    interruption — worth saying before somebody does it mid-call. */}
 			<p className='text-xs text-faint'>
 				Changing a device restarts audio for a moment.
+			</p>
+		</div>
+
+		{/* Says both conditions out loud. On speakers this feeds everyone's
+		    voice back into the microphone, and with only one side switched on
+		    the other still goes quiet while they talk — so a box labelled just
+		    "two-way" would look broken in both cases. */}
+		<div className='flex flex-col gap-1.5'>
+			<label className='flex cursor-pointer items-center gap-2.5'>
+				<input
+					type='checkbox'
+					checked={headphones}
+					onChange={e => onHeadphones(e.currentTarget.checked)}
+					className='size-4 shrink-0 accent-accent'
+				/>
+				<span className='text-sm text-ink'>
+					I'm on headphones — hear others while I talk
+				</span>
+			</label>
+			<p className='text-xs text-muted'>
+				{headphones
+					? 'Two-way only works when the other person has this on too. Turn it off if you switch to speakers, or everyone hears themselves back.'
+					: 'While you hold the talk key your speakers go quiet, so your microphone cannot pick other people back up.'}
 			</p>
 		</div>
 	</div>

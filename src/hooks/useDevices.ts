@@ -13,6 +13,7 @@ export const useDevices = (onError: (message: string) => void) => {
 	const [outputs, setOutputs] = useState<string[]>([]);
 	const [input, setInput] = useState('');
 	const [output, setOutput] = useState('');
+	const [headphones, setHeadphones] = useState(false);
 
 	const list = async () => {
 		if (DEMO) {
@@ -40,6 +41,7 @@ export const useDevices = (onError: (message: string) => void) => {
 			.then(c => {
 				setInput(c?.inputDevice ?? '');
 				setOutput(c?.outputDevice ?? '');
+				setHeadphones(c?.headphones ?? false);
 			})
 			.catch(() => {});
 	}, []);
@@ -62,5 +64,27 @@ export const useDevices = (onError: (message: string) => void) => {
 		}
 	};
 
-	return { inputs, outputs, input, output, choose, refresh: list };
+	/// Applied on the spot in Rust — the next 10 ms of playback follows it — so
+	/// there is no restart to warn about, unlike a device change.
+	const chooseHeadphones = async (on: boolean) => {
+		setHeadphones(on);
+		if (DEMO) return;
+		try {
+			await invoke('set_headphones', { on });
+		} catch (e) {
+			setHeadphones(!on);
+			onError(String(e));
+		}
+	};
+
+	return {
+		inputs,
+		outputs,
+		input,
+		output,
+		choose,
+		refresh: list,
+		headphones,
+		chooseHeadphones
+	};
 };
