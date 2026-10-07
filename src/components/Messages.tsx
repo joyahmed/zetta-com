@@ -17,10 +17,21 @@ const time = (ms: number) =>
 
 /// Under your own line: whether it arrived.
 ///
+/// `waiting` arrives already worked out on addresses; comparing names here
+/// would count two same-named PCs as one.
+///
 /// Never red for silence. A machine on a build older than receipts never
 /// answers, and "no answer" painted as failure would teach people to ignore
 /// the one state that does mean failure: sent to nobody at all.
-const Receipt = ({ to, heard }: { to: string[]; heard: string[] }) => {
+const Receipt = ({
+	to,
+	heard,
+	waiting
+}: {
+	to: string[];
+	heard: string[];
+	waiting: string[];
+}) => {
 	if (to.length === 0) {
 		return (
 			<span className='shrink-0 text-xs whitespace-nowrap text-danger'>
@@ -28,7 +39,6 @@ const Receipt = ({ to, heard }: { to: string[]; heard: string[] }) => {
 			</span>
 		);
 	}
-	const waiting = to.filter(n => !heard.includes(n));
 	const title = [
 		heard.length > 0 && `Received by ${heard.join(', ')}`,
 		waiting.length > 0 && `No answer yet from ${waiting.join(', ')}`
@@ -137,7 +147,7 @@ export const Messages = ({
 								>
 									{m.text}
 								</span>
-								{m.mine && <Receipt {...{ to: m.to, heard: m.heard }} />}
+								{m.mine && <Receipt {...{ to: m.to, heard: m.heard, waiting: m.waiting }} />}
 							</div>
 						);
 					})

@@ -102,6 +102,11 @@ impl Session {
         let mut msgs = self.net.messages();
         for m in &mut msgs {
             if m.mine {
+                // Worked out on addresses, before any of them becomes a name:
+                // two PCs that share a name are still two machines, and one
+                // answering must not tick the other off.
+                m.waiting = m.to.iter().filter(|a| !m.heard.contains(a)).cloned().collect();
+                m.waiting.iter_mut().for_each(name);
                 m.to.iter_mut().for_each(name);
                 m.heard.iter_mut().for_each(name);
             } else {

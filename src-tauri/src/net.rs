@@ -186,6 +186,11 @@ pub struct Message {
     pub to: Vec<String>,
     /// For your own lines: who has answered that it arrived.
     pub heard: Vec<String>,
+    /// For your own lines: `to` minus `heard`, worked out on ADDRESSES by the
+    /// session before it swaps in names. The window used to subtract names, so
+    /// two PCs sharing a name showed a tick when only one had answered.
+    /// Empty here; the session fills it.
+    pub waiting: Vec<String>,
 }
 
 #[derive(Default)]
@@ -519,6 +524,7 @@ impl Handle {
             wire,
             to,
             heard: Vec::new(),
+            waiting: Vec::new(),
         };
         let mut log = match self.messages.lock() {
             Ok(m) => m,
@@ -612,13 +618,16 @@ fn fresh_id() -> u32 {
 }
 
 /// Record that `from` received our message `wire`. False when there is no such
-/// message, or it already counted them.
+/// message, it already counted them, or `from` is not somebody the message went
+/// to: an ACK from any other address is a stranger (or a replayer) claiming a
+/// delivery that was never made, and counting it would paint a receipt for a
+/// person who never saw the text.
 fn mark_heard(log: &mut VecDeque<Message>, wire: u32, from: &str) -> bool {
     if wire == 0 {
         return false;
     }
     match log.iter_mut().rev().find(|m| m.mine && m.wire == wire) {
-        Some(m) if !m.heard.iter().any(|h| h == from) => {
+        Some(m) if m.to.iter().any(|t| t == from) && !m.heard.iter().any(|h| h == from) => {
             m.heard.push(from.to_string());
             true
         }
@@ -626,25 +635,37 @@ fn mark_heard(log: &mut VecDeque<Message>, wire: u32, from: &str) -> bool {
     }
 }
 
-/// The last few texts seen, by sender and id.
+/// The last few texts seen, by id alone.
+///
+/// ⛔ Not by (sender address, id). The id is AEAD-authenticated inside the
+/// sealed header, so nobody can change it — but anybody on the LAN can record a
+/// sealed text off the wire and send the same bytes again from their OWN
+/// socket. Keyed on the pair, that replay is a new pair and shows a second
+/// time. Keyed on the id, the same bytes are the same message wherever they
+/// come from.
+///
+/// The price is a collision: two honest texts with the same random id inside
+/// the window would hide the second. With 200 ids remembered out of 2^32 that
+/// is about 200/2^32 per message (one in twenty million), and the loser is one
+/// line that the sender's receipt still shows as unanswered.
 #[derive(Default)]
-struct Recent(VecDeque<(SocketAddr, u32)>);
+struct Recent(VecDeque<u32>);
 
 impl Recent {
-    /// True the first time a (sender, id) pair is seen. Always true for id 0:
-    /// an older build sends every text as 0, and dropping all but its first
-    /// would be far worse than letting its replays through.
-    fn first_time(&mut self, from: SocketAddr, wire: u32) -> bool {
+    /// True the first time an id is seen. Always true for id 0: an older build
+    /// sends every text as 0, and dropping all but its first would be far worse
+    /// than letting its replays through.
+    fn first_time(&mut self, wire: u32) -> bool {
         if wire == 0 {
             return true;
         }
-        if self.0.contains(&(from, wire)) {
+        if self.0.contains(&wire) {
             return false;
         }
         if self.0.len() >= RECENT_TEXTS {
             self.0.pop_front();
         }
-        self.0.push_back((from, wire));
+        self.0.push_back(wire);
         true
     }
 }
@@ -846,6 +867,14 @@ pub fn start(
     socket
         .set_read_timeout(Some(Duration::from_millis(200)))
         .context("setting read timeout")?;
+
+    // The port actually bound. Production passes the configured number, which
+    // is never 0 (config maps 0 to DEFAULT_PORT, and discovery is handed that
+    // same config port, so a 0 here would advertise a port nobody listens on).
+    // 0 is test-only: the OS picks a free port and the tests read it back from
+    // `stats().port`, which closes the gap a "bind, drop, bind again" helper
+    // leaves for another process to take the port.
+    let port = socket.local_addr().context("reading the bound port")?.port();
 
     match dest {
         Some(d) => eprintln!("[net] bound 0.0.0.0:{port}, manual peer {peer} -> {d}"),
@@ -1138,7 +1167,11 @@ pub fn start(
             if h.kind == KIND_TEXT && len > HEADER_LEN {
                 // Answered before the duplicate check, and every time. If the
                 // first answer was lost, answering again is the only way the
-                // sender ever finds out it arrived.
+                // sender ever finds out it arrived. Also answered when the
+                // copy comes from an address that never sent it: whoever holds
+                // the bytes already knows they are a text with this id, so the
+                // ACK tells a replayer nothing new, and refusing it would risk
+                // silencing the real sender if its address ever changed.
                 if h.ts != 0 {
                     let mut ack = [0u8; HEADER_LEN];
                     Header { ver: VER, kind: KIND_ACK, seq: 0, ts: h.ts }.write(&mut ack);
@@ -1146,7 +1179,7 @@ pub fn start(
                         let _ = socket.send_to(&packet, from);
                     }
                 }
-                if !recent.first_time(from, h.ts) {
+                if !recent.first_time(h.ts) {
                     eprintln!("[net] text <- {from} again (id {}), dropped", h.ts);
                     continue;
                 }
@@ -1165,6 +1198,7 @@ pub fn start(
                     wire: h.ts,
                     to: Vec::new(),
                     heard: Vec::new(),
+                    waiting: Vec::new(),
                 };
                 let mut log = match rx_messages.lock() {
                     Ok(m) => m,
@@ -1434,6 +1468,7 @@ mod tests {
             wire,
             to: vec!["a".into(), "b".into()],
             heard: Vec::new(),
+            waiting: Vec::new(),
         }
     }
 
@@ -1448,6 +1483,16 @@ mod tests {
     }
 
     #[test]
+    fn a_receipt_from_somebody_it_was_not_sent_to_is_ignored() {
+        let mut log: VecDeque<Message> = [mine(9)].into();
+        assert!(!mark_heard(&mut log, 9, "stranger"));
+        assert!(log[0].heard.is_empty());
+        // A real recipient still counts afterwards.
+        assert!(mark_heard(&mut log, 9, "a"));
+        assert_eq!(log[0].heard, ["a"]);
+    }
+
+    #[test]
     fn a_receipt_never_marks_a_received_line_or_an_old_build() {
         let mut theirs = mine(7);
         theirs.mine = false;
@@ -1459,34 +1504,39 @@ mod tests {
 
     #[test]
     fn a_replayed_text_is_dropped() {
-        let a: SocketAddr = "10.0.0.1:9001".parse().unwrap();
-        let b: SocketAddr = "10.0.0.2:9001".parse().unwrap();
         let mut r = Recent::default();
-        assert!(r.first_time(a, 5));
-        assert!(!r.first_time(a, 5));
-        // The same id from another machine is a different message.
-        assert!(r.first_time(b, 5));
+        assert!(r.first_time(5));
+        assert!(!r.first_time(5));
+        assert!(r.first_time(6));
+    }
+
+    /// The attack: record a sealed text, send it again from your own socket.
+    /// The id is inside the authenticated header so it cannot be changed, and
+    /// the sender's address no longer makes it look new.
+    #[test]
+    fn a_replay_from_a_different_address_is_dropped() {
+        let mut r = Recent::default();
+        assert!(r.first_time(5), "first copy, from the real sender");
+        assert!(!r.first_time(5), "same id from another machine is the same message");
     }
 
     #[test]
     fn an_old_build_is_never_deduplicated() {
-        let a: SocketAddr = "10.0.0.1:9001".parse().unwrap();
         let mut r = Recent::default();
-        assert!(r.first_time(a, 0));
-        assert!(r.first_time(a, 0));
+        assert!(r.first_time(0));
+        assert!(r.first_time(0));
     }
 
     #[test]
     fn recent_forgets_the_oldest() {
-        let a: SocketAddr = "10.0.0.1:9001".parse().unwrap();
         let mut r = Recent::default();
         let n = RECENT_TEXTS as u32;
         for id in 1..=n + 1 {
-            r.first_time(a, id);
+            r.first_time(id);
         }
         // 1 was pushed out by n + 1; n is still remembered.
-        assert!(r.first_time(a, 1));
-        assert!(!r.first_time(a, n));
+        assert!(r.first_time(1));
+        assert!(!r.first_time(n));
     }
 
     #[test]
@@ -1523,18 +1573,21 @@ mod loopback {
     use std::sync::mpsc;
     use std::time::Duration;
 
-    /// A port nothing is using right now. Fixed numbers are not safe on
-    /// Windows, which reserves whole ranges for Hyper-V without saying so.
-    fn free() -> u16 {
-        UdpSocket::bind("0.0.0.0:0").unwrap().local_addr().unwrap().port()
+    /// Start on port 0 and let the OS pick: fixed numbers are not safe on
+    /// Windows (Hyper-V reserves whole ranges), and picking a free port, closing
+    /// it and binding it again leaves a gap another process can take. The real
+    /// port is read back from `stats().port`. 0 is test-only; production is
+    /// always given the configured port.
+    fn up(pass: &str, name: &str, tx: SyncSender<(SocketAddr, Option<Vec<u8>>)>) -> (Handle, u16) {
+        let h = start(0, "", pass, name, tx, Arc::new(Mutex::new(Aim::All))).unwrap();
+        let port = h.stats().port;
+        (h, port)
     }
 
     fn pair(pass: &str) -> (Handle, Handle, u16) {
-        let (a, b) = (free(), free());
         let (tx, _rx) = mpsc::sync_channel(64);
-        let aim = || Arc::new(Mutex::new(Aim::All));
-        let ha = start(a, "", pass, "A", tx.clone(), aim()).unwrap();
-        let hb = start(b, "", pass, "B", tx, aim()).unwrap();
+        let (ha, a) = up(pass, "A", tx.clone());
+        let (hb, b) = up(pass, "B", tx);
         let addr_b: SocketAddr = format!("127.0.0.1:{b}").parse().unwrap();
         let addr_a: SocketAddr = format!("127.0.0.1:{a}").parse().unwrap();
         ha.set_targets(vec![addr_b], vec![addr_b]);
@@ -1551,8 +1604,8 @@ mod loopback {
         let shared = Arc::new(Mutex::new(Aim::All));
         let one: SocketAddr = "10.0.0.3:9001".parse().unwrap();
         let (tx, _rx) = mpsc::sync_channel(64);
-        let port = free();
-        let first = start(port, "", "", "A", tx.clone(), shared.clone()).unwrap();
+        let first = start(0, "", "", "A", tx.clone(), shared.clone()).unwrap();
+        let port = first.stats().port;
         *shared.lock().unwrap() = Aim::One(one);
         drop(first);
         let second = start(port, "", "", "A", tx, shared.clone()).unwrap();
@@ -1594,8 +1647,7 @@ mod loopback {
     #[test]
     fn a_replayed_packet_shows_once_and_is_still_answered() {
         let (tx, _rx) = mpsc::sync_channel(64);
-        let port_b = free();
-        let b = start(port_b, "", "", "B", tx, Arc::new(Mutex::new(Aim::All))).unwrap();
+        let (b, port_b) = up("", "B", tx);
         let raw = UdpSocket::bind("127.0.0.1:0").unwrap();
         raw.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
 
@@ -1614,11 +1666,31 @@ mod loopback {
         assert_eq!(b.messages().iter().filter(|m| m.text == "go!").count(), 1);
     }
 
+    /// A replayer on its own socket: the copy is answered (it already holds the
+    /// bytes, so the ACK tells it nothing) but never shown a second time.
+    #[test]
+    fn a_replay_from_a_new_address_is_answered_and_not_shown() {
+        let (tx, _rx) = mpsc::sync_channel(64);
+        let (b, port_b) = up("", "B", tx);
+        let mut packet = [0u8; HEADER_LEN + 3];
+        Header { ver: VER, kind: KIND_TEXT, seq: 0, ts: 77 }.write(&mut packet);
+        packet[HEADER_LEN..].copy_from_slice(b"hey");
+        for _ in 0..2 {
+            let raw = UdpSocket::bind("127.0.0.1:0").unwrap();
+            raw.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+            raw.send_to(&packet, ("127.0.0.1", port_b)).unwrap();
+            let mut buf = [0u8; 64];
+            let (n, _) = raw.recv_from(&mut buf).unwrap();
+            assert_eq!(Header::parse(&buf[..n]).unwrap().kind, KIND_ACK);
+        }
+        thread::sleep(Duration::from_millis(200));
+        assert_eq!(b.messages().iter().filter(|m| m.text == "hey").count(), 1);
+    }
+
     #[test]
     fn an_old_build_text_is_shown_and_not_answered() {
         let (tx, _rx) = mpsc::sync_channel(64);
-        let port_b = free();
-        let b = start(port_b, "", "", "B", tx, Arc::new(Mutex::new(Aim::All))).unwrap();
+        let (b, port_b) = up("", "B", tx);
         let raw = UdpSocket::bind("127.0.0.1:0").unwrap();
         raw.set_read_timeout(Some(Duration::from_millis(500))).unwrap();
 
@@ -1659,8 +1731,7 @@ mod loopback {
     #[test]
     fn a_status_packet_marks_the_sender_busy_and_then_available() {
         let (tx, _rx) = mpsc::sync_channel(64);
-        let port_b = free();
-        let b = start(port_b, "", "", "B", tx, Arc::new(Mutex::new(Aim::All))).unwrap();
+        let (b, port_b) = up("", "B", tx);
         let raw = UdpSocket::bind("127.0.0.1:0").unwrap();
         let me = raw.local_addr().unwrap();
 

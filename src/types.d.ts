@@ -155,6 +155,9 @@ type Message = {
 	/// than receipts never answers, so a short `heard` is not a failure.
 	to: string[];
 	heard: string[];
+	/// `to` minus `heard`, worked out on addresses before they became names, so
+	/// two PCs with the same name are not mistaken for one.
+	waiting: string[];
 };
 
 type MessagesProps = {

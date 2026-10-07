@@ -128,10 +128,10 @@ const RECEIPTS: Record<number, { to: string[]; heard: string[] }> = {
 	12: { to: OUT, heard: OUT.slice(0, 3) }
 };
 
-const withReceipts = (m: Omit<Message, 'to' | 'heard'>): Message => ({
-	...m,
-	...(RECEIPTS[m.id] ?? { to: [], heard: [] })
-});
+const withReceipts = (m: Omit<Message, 'to' | 'heard' | 'waiting'>): Message => {
+	const { to, heard } = RECEIPTS[m.id] ?? { to: [], heard: [] };
+	return { ...m, to, heard, waiting: to.filter(n => !heard.includes(n)) };
+};
 
 export const DEMO_MESSAGES: Message[] = ([
 	{ id: 1, from: '', text: 'Freeze on main until the release is out', mine: true, at: at(9, 10) },
@@ -147,7 +147,7 @@ export const DEMO_MESSAGES: Message[] = ([
 	{ id: 11, from: 'Emon', text: 'Migration done, new schema is up', mine: false, at: at(9, 34) },
 	{ id: 12, from: '', text: 'Run the smoke tests before anyone merges', mine: true, at: at(9, 35) },
 	{ id: 13, from: 'Salman', text: 'Smoke passed, deploying', mine: false, at: at(9, 41) }
-] as Omit<Message, 'to' | 'heard'>[]).map(withReceipts);
+] as Omit<Message, 'to' | 'heard' | 'waiting'>[]).map(withReceipts);
 
 /// Two teams, one with a member who is offline, so the chip shows a group can
 /// be live while somebody in it is not.
