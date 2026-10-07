@@ -184,7 +184,7 @@ Same files: `net.rs` (`send_text` `:402`, receive `:884`, `Message` `:150`), `Me
 
 ## Phase E — Groups
 
-> **Status:** built (commit below). Decided 2026-10-07: **saved groups**. Not in a release yet.
+> **Status:** built — `ba09186`. Decided 2026-10-07: **saved groups**. Not in a release yet.
 
 
 Same files: `net.rs` (`set_target` `:260`, `recipients` `:274`), `keys.rs` `aim` `:286`, `config.rs`, `Targets.tsx`.
