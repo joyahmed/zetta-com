@@ -75,6 +75,11 @@ impl Session {
         self.net.send_text(text);
     }
 
+    /// Whoever was heard talking last, for the reply key.
+    pub fn last_speaker(&self) -> Option<SocketAddr> {
+        self.net.last_speaker()
+    }
+
     /// Aim voice and text at one machine, or at everyone when `None`.
     pub fn set_target(&self, addr: Option<SocketAddr>) {
         self.net.set_target(addr);

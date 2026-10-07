@@ -71,7 +71,7 @@ Two things it does that most of the alternatives cannot:
 | | |
 |---|---|
 | **Push to talk** | Hold `F8` and whoever is selected hears you. Nothing is transmitted unless the key is held. |
-| **One person or everyone** | `Ctrl+1…9` talks to a specific PC, `Ctrl+0` to the room. |
+| **One person or everyone** | `Ctrl+1…9` talks to a specific PC, `Ctrl+0` to the room, `F7` back to whoever spoke last. |
 | **Messages** | Type, or fire a preset with a key. They arrive as native notifications when the window is hidden. |
 | **Finds everyone by itself** | mDNS discovery — no addresses to type on a normal network. |
 | **Reports absence** | A heartbeat every two seconds; somebody who goes quiet greys out within seven. It says who is *not* there, not just who is. |
@@ -148,6 +148,7 @@ and `.rpm` on Linux, `.dmg` on macOS. Each platform builds only its own; the
 | Key | |
 |---|---|
 | `F8` (hold) | talk to whoever is selected |
+| `F7` (hold) | talk back to whoever spoke last |
 | `Ctrl+1…9` (hold) | talk to that PC |
 | `Ctrl+0` (hold) | talk to everyone |
 | `Ctrl+Shift+1…9` | message that PC |
@@ -303,6 +304,11 @@ Half duplex, deliberately. Local playback is muted while you transmit, so the
 echo path never exists and there is nothing to cancel. Full duplex would have
 meant acoustic echo cancellation, and that becomes the project rather than a
 step in it.
+
+The exception is a switch in Settings, **I'm on headphones**: it keeps playback
+on while you talk, so two people who both have it on can talk over each other
+like a phone call. On speakers it feeds everyone's voice back into your
+microphone, which is why it is off by default.
 
 ---
 

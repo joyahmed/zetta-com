@@ -392,6 +392,17 @@ impl Handle {
         stamped_within(&self.last_audio, addr, TALKING_TIMEOUT)
     }
 
+    /// Whoever sent voice most recently, however long ago. `None` until
+    /// somebody has spoken. For the reply key: the person to answer is the last
+    /// one heard, even if they finished a minute ago.
+    pub fn last_speaker(&self) -> Option<SocketAddr> {
+        let map = match self.last_audio.lock() {
+            Ok(m) => m,
+            Err(e) => e.into_inner(),
+        };
+        newest(&map)
+    }
+
     /// Send a line of text to everyone live.
     ///
     /// Its own path and its own call, deliberately. In v1 one keypress both
@@ -505,6 +516,11 @@ fn stamped_within(
         Err(e) => e.into_inner(),
     };
     map.get(&addr).is_some_and(|t| t.elapsed() < within)
+}
+
+/// The address with the latest stamp.
+fn newest(map: &HashMap<SocketAddr, Instant>) -> Option<SocketAddr> {
+    map.iter().max_by_key(|(_, t)| **t).map(|(a, _)| *a)
 }
 
 /// Resolve to an IPv4 address specifically.
@@ -1099,6 +1115,20 @@ mod tests {
     fn gap_ignores_a_late_packet() {
         assert_eq!(gap(10, 9), 0);
         assert_eq!(gap(0, 65535), 0);
+    }
+
+    #[test]
+    fn newest_is_the_last_one_stamped() {
+        let a: SocketAddr = "10.0.0.1:9001".parse().unwrap();
+        let b: SocketAddr = "10.0.0.2:9001".parse().unwrap();
+        let mut map = HashMap::new();
+        assert_eq!(newest(&map), None);
+        let t = Instant::now();
+        map.insert(a, t);
+        map.insert(b, t + Duration::from_millis(5));
+        assert_eq!(newest(&map), Some(b));
+        map.insert(a, t + Duration::from_millis(10));
+        assert_eq!(newest(&map), Some(a));
     }
 
     #[test]

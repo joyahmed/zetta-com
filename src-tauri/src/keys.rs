@@ -26,6 +26,9 @@ pub enum Action {
     TalkTo(usize),
     /// Aim at that machine and bring the window up ready to type.
     MessageTo(usize),
+    /// Hold to talk back to whoever was heard last. Like `TalkTo`, the target
+    /// stays on them after release, so a typed answer goes to the same person.
+    Reply,
     /// Hold to talk to the whole room, whoever was selected.
     TalkAll,
     /// Aim at the whole room and bring the window up ready to type.
@@ -69,8 +72,11 @@ pub struct ShortcutInfo {
 
 /// The keys that can be rebound, in the order they are shown, with what they do
 /// and what they are unless somebody says otherwise.
-pub const EDITABLE: [(&str, &str, &str); 6] = [
+pub const EDITABLE: [(&str, &str, &str); 7] = [
     ("talk", "Talk to whoever is selected", "F8"),
+    // F7, beside the talk key: answering is the second most common thing done
+    // with this app, and it should not need the roster number of whoever spoke.
+    ("reply", "Talk back to whoever spoke last", "F7"),
     ("talk-all", "Talk to everyone", "CommandOrControl+Digit0"),
     (
         "message-all",
@@ -352,6 +358,28 @@ pub fn dispatch(
             }
         }
 
+        // Voice only decides who spoke last; a text message does not. Nobody
+        // heard yet, or the last speaker since gone offline, opens no
+        // microphone — the same as an empty slot, never a fallback to everyone.
+        Action::Reply => {
+            if pressed {
+                let last = app
+                    .state::<NetState>()
+                    .0
+                    .lock()
+                    .ok()
+                    .and_then(|g| g.as_ref().and_then(|s| s.last_speaker()));
+                match last {
+                    Some(addr) => {
+                        aim(app, Some(addr));
+                        eprintln!("[keys] replying to {addr}");
+                    }
+                    None => return eprintln!("[keys] nobody to reply to yet"),
+                }
+            }
+            ptt.store(pressed, Ordering::Relaxed);
+        }
+
         Action::TalkAll => {
             if pressed {
                 aim(app, None);
@@ -414,6 +442,7 @@ pub fn register_all(
     for (id, label, _) in EDITABLE {
         let action = match id {
             "talk" => Action::Talk,
+            "reply" => Action::Reply,
             "talk-all" => Action::TalkAll,
             "message-all" => Action::MessageAll,
             "start-stop" => Action::ToggleTransport,
