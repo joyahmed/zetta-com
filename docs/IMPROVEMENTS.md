@@ -209,7 +209,7 @@ Same files: `net.rs` (`set_target` `:260`, `recipients` `:274`), `keys.rs` `aim`
 > **Status:** Do-not-disturb built — `6dfcaca`. New `KIND_STATUS = 5` beside the heartbeat, not in it, and no `VER` bump. Not saved: off at every launch. Not in a release yet; not yet tried on two machines.
 > **Status:** Per-person volume built — `39c92d5` (0–200% per PC, in Settings → PCs → Edit; live, saved by address). Not yet heard with real audio.
 
-- [x] Do-not-disturb: a tray switch that stops playback and sounds, and tells others in the heartbeat.
+- [ ] Do-not-disturb: a tray switch that stops playback and sounds, and tells others in the heartbeat.
 - [ ] Per-person volume: a gain per source in the mixer (`audio.rs:940-951`).
 - [ ] Refresh PLAN.md. It says "Updated 2026-08-09", and the "Required" section still says "no per-person keys" (`PLAN.md:296-297`), which the same file reverses higher up.
 - [x] `tauri-specta` — replaced by the `ipc_shape` test (40cde81): it fails when a Rust struct and `types.d.ts` disagree on field names. tauri-specta is still rc.25 with no stable 2.x; revisit when one ships.
@@ -223,3 +223,26 @@ Same files: `net.rs` (`set_target` `:260`, `recipients` `:274`), `keys.rs` `aim`
 - The mixer comment says push-to-talk does not exist yet — fixed in B.1.
 - Up to 160 ms of old audio plays after you let go of the talk key — fixed in B.1.
 - No replay check on encrypted packets — fixed in D.3.
+
+---
+
+## Review of Phases A–E, 2026-10-07
+
+One hostile review of `546ec96..8198cad`, then every finding attacked by a
+second agent trying to disprove it. 12 confirmed, 1 refuted. All 12 fixed.
+
+| # | Was | Fixed in |
+|---|---|---|
+| 1 | ⛔ A session restart (passphrase, audio device, PC list) silently aimed everything at **everyone** | `db2e2b7` — Rust owns the aim across sessions |
+| 2 | ⛔ Renaming or deleting the aimed group fell back to **everyone** | `db2e2b7` — groups have stable ids; deleted → nobody |
+| 3 | Renaming a group onto a taken name silently deleted it | `db2e2b7` — refused with a message |
+| 4 | False online/offline tones on start and on every restart | `b0a9753` |
+| 5 | Replay guard bypassed by resending from another address | `e0bfe9b` — keyed on message id |
+| 6 | Volume slider lost focus after one arrow key | `e996bf1` |
+| 7 | Keys changed the target without telling the window | `db2e2b7` — `target` event |
+| 8 | F7 to someone gone offline opened the mic to nobody | `db2e2b7` |
+| 9 | Key auto-repeat re-aiming mid-sentence | Refuted: global-hotkey 0.8.0 never delivers repeats; comment corrected in `db2e2b7` |
+| 10 | Receipts accepted any sender, and compared names not addresses | `e0bfe9b` |
+| 11 | Voice-start blip went out through an open mic on speakers | `db2e2b7` |
+| 12 | Release gate never run on macOS/Linux; toolchain unpinned | `c4d42ec` — Rust 1.96.1 pinned, check runs on all three |
+| 13 | Loopback test port race | `e0bfe9b` |
