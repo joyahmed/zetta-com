@@ -451,6 +451,22 @@ pub fn set_headphones(app: tauri::AppHandle, on: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// Set how loud one person is to you, 0.0 to 2.0. Live: the mixer reads it on
+/// the next frame. 1.0 is stored as no entry, so the file stays small.
+#[tauri::command]
+pub fn set_volume(app: tauri::AppHandle, addr: String, gain: f32) -> Result<(), String> {
+    let mut cfg = config::load(&app).unwrap_or_default();
+    let gain = if gain.is_nan() { 1.0 } else { gain.clamp(0.0, crate::audio::MAX_GAIN) };
+    if gain == 1.0 {
+        cfg.volumes.remove(&addr);
+    } else {
+        cfg.volumes.insert(addr, gain);
+    }
+    config::save(&app, &cfg).map_err(|e| format!("{e:#}"))?;
+    crate::audio::set_gains(&cfg.volumes);
+    Ok(())
+}
+
 /// Save which sounds play and how loud. The window plays them, so there is
 /// nothing to apply here beyond writing it down.
 #[tauri::command]

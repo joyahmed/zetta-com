@@ -160,6 +160,7 @@ pub fn run() {
             commands::ptt_held,
             commands::set_headphones,
             commands::set_sounds,
+            commands::set_volume,
             commands::set_watched,
             commands::send_text,
             commands::messages,
@@ -229,6 +230,7 @@ pub fn run() {
             notify::init(app.handle().clone());
             let cfg = config::load(app.handle()).unwrap_or_default();
             audio::HEADPHONES.store(cfg.headphones, std::sync::atomic::Ordering::Relaxed);
+            audio::set_gains(&cfg.volumes);
             keys::register_all(&app.handle().clone(), &bindings, &listing, &cfg);
             app.manage(Ptt(ptt.clone()));
             app.manage(Shortcuts(listing.clone()));

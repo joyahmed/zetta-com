@@ -757,6 +757,54 @@ fn build_capture(
 /// be live — flipping it must not rebuild the audio pipeline.
 pub static HEADPHONES: AtomicBool = AtomicBool::new(false);
 
+/// How loud each remote person is to this listener, by the address their audio
+/// arrives from. A missing entry means 100%.
+///
+/// A process-wide static for the same reason as `HEADPHONES`: it outlives every
+/// session and must follow a slider drag without rebuilding the audio pipeline.
+/// It is a map behind a mutex rather than an atomic because the set of people
+/// is open-ended. It is read on the mixer thread, once per source per 20 ms
+/// frame, and never from the real-time output callback; the lock is held only
+/// to copy one `f32` out, and the settings screen writes it a few times a
+/// minute at most.
+pub static GAINS: Mutex<Option<HashMap<SocketAddr, f32>>> = Mutex::new(None);
+
+/// The most a person can be turned up: 200%. Past that the clamp after the sum
+/// is doing most of the work and it just sounds broken.
+pub const MAX_GAIN: f32 = 2.0;
+
+/// Replace every person's gain at once. Entries that do not parse as an
+/// address are dropped: a hand-edited config must not stop the app starting.
+pub fn set_gains(volumes: &HashMap<String, f32>) {
+    let parsed: HashMap<SocketAddr, f32> = volumes
+        .iter()
+        .filter_map(|(a, g)| Some((a.parse().ok()?, g.clamp(0.0, MAX_GAIN))))
+        .collect();
+    let mut guard = match GAINS.lock() {
+        Ok(g) => g,
+        Err(e) => e.into_inner(),
+    };
+    *guard = Some(parsed);
+}
+
+/// One person's gain right now, 1.0 when none was ever set.
+fn gain_of(from: &SocketAddr) -> f32 {
+    let guard = match GAINS.lock() {
+        Ok(g) => g,
+        Err(e) => e.into_inner(),
+    };
+    guard.as_ref().and_then(|m| m.get(from).copied()).unwrap_or(1.0)
+}
+
+/// One sample at a person's gain, still in `i32`.
+///
+/// Not clamped here: the mixer sums everyone and clamps once, because
+/// clamping each source first would flatten a loud person before their voice
+/// had been added to anyone else's.
+fn scaled(sample: i16, gain: f32) -> i32 {
+    (sample as f32 * gain).round() as i32
+}
+
 /// Whether playback is silenced right now.
 fn muted(transmit: &AtomicBool) -> bool {
     transmit.load(Ordering::Relaxed) && !HEADPHONES.load(Ordering::Relaxed)
@@ -976,12 +1024,15 @@ fn build_playback(
                     break;
                 }
                 mixed[..opus_frame].fill(0);
-                for (_, q) in sources.values_mut() {
+                for (addr, (_, q)) in sources.iter_mut() {
                     if q.len() < opus_frame {
                         continue;
                     }
+                    // Per person, before the sum: turning one voice up must
+                    // not turn up the person next to them.
+                    let gain = gain_of(addr);
                     for (m, s) in mixed[..opus_frame].iter_mut().zip(q.drain(..opus_frame)) {
-                        *m += s as i32;
+                        *m += scaled(s, gain);
                     }
                 }
                 // Sum in i32 and clamp once. Summing in i16 would wrap, and a
@@ -1256,6 +1307,33 @@ fn pick(device: &Device, input: bool) -> Result<SupportedStreamConfig> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gain_unity_mute_and_double() {
+        assert_eq!(scaled(1000, 1.0), 1000);
+        assert_eq!(scaled(-1000, 1.0), -1000);
+        assert_eq!(scaled(1000, 0.0), 0);
+        assert_eq!(scaled(1000, 2.0), 2000);
+        assert_eq!(scaled(i16::MIN, 2.0), -65_536);
+    }
+
+    #[test]
+    fn two_loud_voices_at_double_clamp_instead_of_wrapping() {
+        let sum = scaled(i16::MAX, 2.0) + scaled(i16::MAX, 2.0);
+        assert_eq!(sum.clamp(i16::MIN as i32, i16::MAX as i32), i16::MAX as i32);
+        let low = scaled(i16::MIN, 2.0) + scaled(i16::MIN, 2.0);
+        assert_eq!(low.clamp(i16::MIN as i32, i16::MAX as i32), i16::MIN as i32);
+    }
+
+    #[test]
+    fn set_gains_clamps_skips_bad_addresses_and_defaults_to_unity() {
+        let mut v = HashMap::new();
+        v.insert("10.9.9.9:9001".to_string(), 5.0);
+        v.insert("not an address".to_string(), 0.5);
+        set_gains(&v);
+        assert_eq!(gain_of(&"10.9.9.9:9001".parse().unwrap()), MAX_GAIN);
+        assert_eq!(gain_of(&"10.9.9.8:9001".parse().unwrap()), 1.0);
+    }
 
     #[test]
     fn nearest_opus_rounds_down() {

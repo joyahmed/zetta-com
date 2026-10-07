@@ -23,6 +23,7 @@ import { useMessages } from './hooks/useMessages';
 import { usePtt } from './hooks/usePtt';
 import { useShortcuts } from './hooks/useShortcuts';
 import { useSounds } from './hooks/useSounds';
+import { useVolumes } from './hooks/useVolumes';
 import { useStartup } from './hooks/useStartup';
 import { useDevices } from './hooks/useDevices';
 import { useGroups } from './hooks/useGroups';
@@ -62,6 +63,7 @@ const App = () => {
 	const room = useRoom(setError);
 	const startup = useStartup(setError);
 	const sounds = useSounds(peers, running, setError);
+	const volumes = useVolumes(setError);
 	const {
 		shortcuts,
 		setShortcut,
@@ -276,7 +278,9 @@ const App = () => {
 								onRemove: remove,
 								onReorder: reorder,
 								watched: sounds.watched,
-								onWatch: sounds.watch
+								onWatch: sounds.watch,
+								volumes: volumes.volumes,
+								onVolume: volumes.setVolume
 							}}
 						/>
 					</div>
