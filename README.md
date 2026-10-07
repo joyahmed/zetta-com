@@ -280,6 +280,9 @@ is **not** there, which the old version never could.
 `docs/PLAN.md` carries the decisions and the reasoning, including what was
 rejected and why.
 
+`docs/IMPROVEMENTS.md` is what gets built next, in order, as checkboxes.
+`docs/IMPROVEMENTS.md` is what gets built next, in order, as checkboxes.
+
 ---
 
 ## How it works
