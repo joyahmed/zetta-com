@@ -17,3 +17,8 @@ pub struct NetState(pub Mutex<Option<session::Session>>);
 /// pressed Stop and Start.
 pub struct Ptt(pub Arc<AtomicBool>);
 
+/// The tray's "Do not disturb" check item, kept so that switching DND from the
+/// window can tick or untick it. Without this the tray and the window would
+/// each show their own idea of the state, and the tray is the one people trust.
+pub struct DndItem(pub tauri::menu::CheckMenuItem<tauri::Wry>);
+

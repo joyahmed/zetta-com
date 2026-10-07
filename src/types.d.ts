@@ -113,6 +113,9 @@ type Peer = {
 	/// which never sends one at all — so null is an ordinary state and never
 	/// means anything is wrong.
 	version: string | null;
+	/// Do-not-disturb is on at their end: text still reaches them, voice is not
+	/// played. False for a build too old to say, which has no DND to be on.
+	busy: boolean;
 };
 
 type TalkBarProps = { held: boolean; key_: string; to: string };
@@ -236,6 +239,9 @@ type NavProps = {
 	onShortcuts: () => void;
 	onSettings: () => void;
 	onDiagnostics: () => void;
+	/// Do-not-disturb, this machine. Switched here or from the tray.
+	dnd: boolean;
+	onDnd: (on: boolean) => void;
 };
 
 /// One line of the PCs list. Flattened from a discovered `Peer` or from a bare

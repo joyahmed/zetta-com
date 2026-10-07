@@ -27,7 +27,8 @@ export const DEMO_PEERS: Peer[] = [
 		live: true,
 		talking: false,
 		manual: false,
-		version: null
+		version: null,
+		busy: false
 	},
 	{
 		id: 'demo-riya',
@@ -36,7 +37,9 @@ export const DEMO_PEERS: Peer[] = [
 		live: true,
 		talking: false,
 		manual: false,
-		version: null
+		version: null,
+		// On do-not-disturb, so screenshots show what busy looks like.
+		busy: true
 	},
 	{
 		id: 'demo-salman',
@@ -45,7 +48,8 @@ export const DEMO_PEERS: Peer[] = [
 		live: true,
 		talking: true,
 		manual: false,
-		version: null
+		version: null,
+		busy: false
 	},
 	{
 		id: 'demo-emon',
@@ -54,7 +58,8 @@ export const DEMO_PEERS: Peer[] = [
 		live: true,
 		talking: false,
 		manual: false,
-		version: null
+		version: null,
+		busy: false
 	},
 	{
 		id: 'demo-ahad',
@@ -63,7 +68,8 @@ export const DEMO_PEERS: Peer[] = [
 		live: true,
 		talking: false,
 		manual: false,
-		version: null
+		version: null,
+		busy: false
 	},
 	{
 		id: 'demo-rashique',
@@ -72,7 +78,8 @@ export const DEMO_PEERS: Peer[] = [
 		live: false,
 		talking: false,
 		manual: false,
-		version: null
+		version: null,
+		busy: false
 	},
 	{
 		// Manually added, so the Settings list has one row with an editable
@@ -83,7 +90,8 @@ export const DEMO_PEERS: Peer[] = [
 		live: true,
 		talking: false,
 		manual: true,
-		version: null
+		version: null,
+		busy: false
 	}
 ];
 

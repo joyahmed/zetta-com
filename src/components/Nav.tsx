@@ -1,25 +1,32 @@
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { Dot } from './Dot';
+import { Moon } from './Moon';
 
 const IconButton = ({
 	label,
 	onClick,
-	children
+	children,
+	on
 }: {
 	label: string;
 	onClick: () => void;
 	children: React.ReactNode;
+	/// For a switch rather than a door: set, and the icon stays lit.
+	on?: boolean;
 }) => (
 	<button
 		type='button'
 		onClick={onClick}
 		title={label}
 		aria-label={label}
+		aria-pressed={on}
 		// p-1.5, not p-2. Four icons plus a button plus the window controls share
 		// this bar with the machine name, and the name is the only part of it
 		// that has a length nobody chose — 8px per icon is the difference between
 		// "Admins-Mac-Studio" reading in full and reading as "Admins-Mac-Stu…".
-		className='rounded-lg p-1.5 text-muted transition hover:bg-sunken hover:text-ink'
+		className={`rounded-lg p-1.5 transition hover:bg-sunken ${
+			on ? 'bg-accent-soft text-accent' : 'text-muted hover:text-ink'
+		}`}
 	>
 		{children}
 	</button>
@@ -58,6 +65,8 @@ export const Nav = ({
 	onAddPc,
 	onShortcuts,
 	onSettings,
+	dnd,
+	onDnd,
 	onDiagnostics
 }: NavProps) => (
 	<header className='sticky top-0 z-10 border-b border-line bg-canvas/90 backdrop-blur'>
@@ -133,6 +142,18 @@ export const Nav = ({
 				</p>
 			</div>
 
+			{/* First of the icons, because it is the one that changes what
+			    happens to you. Lit while on; the bar on the main screen says
+			    it in words. */}
+			<IconButton
+				{...{
+					label: dnd ? 'Do not disturb is on — turn off' : 'Do not disturb',
+					onClick: () => onDnd(!dnd),
+					on: dnd
+				}}
+			>
+				<Moon {...{ size: 17, filled: dnd }} />
+			</IconButton>
 			<IconButton {...{ label: 'Add a PC', onClick: onAddPc }}>
 				<svg width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='currentColor' strokeWidth='2' strokeLinecap='round'>
 					<path d='M12 5v14M5 12h14' />

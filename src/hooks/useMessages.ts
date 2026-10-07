@@ -7,7 +7,7 @@ import {
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { useEffect, useRef, useState } from 'react';
 import { DEMO, DEMO_MESSAGES } from '../demo';
-import { sound } from '../utils/sounds';
+import { isQuiet, sound } from '../utils/sounds';
 
 const POLL_MS = 600;
 
@@ -63,7 +63,10 @@ export const useMessages = (running: boolean) => {
 					const attended = await Promise.all([w.isVisible(), w.isFocused()])
 						.then(([visible, focused]) => visible && focused)
 						.catch(() => false);
-					if (!attended) {
+					// Do-not-disturb hides the interruption, never the message:
+					// it is already in the log above, and `seen` still moves on
+					// below so turning DND off does not replay it as a toast.
+					if (!attended && !isQuiet()) {
 						// Once, however many arrived together. A chime per
 						// message turns three at the same moment into a noise
 						// nobody can count.

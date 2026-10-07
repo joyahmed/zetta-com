@@ -25,7 +25,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 
 use tauri::{
-    menu::{Menu, MenuItem},
+    menu::{CheckMenuItem, Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Manager, WindowEvent,
 };
@@ -159,6 +159,8 @@ pub fn run() {
             commands::config_get,
             commands::ptt_held,
             commands::set_headphones,
+            commands::set_dnd,
+            commands::dnd_get,
             commands::set_sounds,
             commands::set_watched,
             commands::send_text,
@@ -195,8 +197,12 @@ pub fn run() {
             }
 
             let show = MenuItem::with_id(app, "show", "Show", true, None::<&str>)?;
+            // Unticked at every launch, because DND is never saved — see
+            // `audio::DND`.
+            let dnd = CheckMenuItem::with_id(app, "dnd", "Do not disturb", true, false, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-            let menu = Menu::with_items(app, &[&show, &quit])?;
+            let menu = Menu::with_items(app, &[&show, &dnd, &quit])?;
+            app.manage(state::DndItem(dnd));
 
             TrayIconBuilder::new()
                 .icon(app.default_window_icon().unwrap().clone())
@@ -205,6 +211,14 @@ pub fn run() {
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => reveal(app),
+                    // Flipped from the live flag rather than read off the
+                    // item: Windows ticks a check item itself on click, and
+                    // whether that has happened yet by now is not ours to
+                    // know. apply_dnd sets the tick to match either way.
+                    "dnd" => commands::apply_dnd(
+                        app,
+                        !audio::DND.load(std::sync::atomic::Ordering::Relaxed),
+                    ),
                     "quit" => app.exit(0),
                     _ => {}
                 })

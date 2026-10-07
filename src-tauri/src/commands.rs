@@ -6,9 +6,9 @@
 
 use std::sync::atomic::Ordering;
 
-use tauri::State;
+use tauri::{Manager, State};
 
-use crate::state::{NetState, Ptt};
+use crate::state::{DndItem, NetState, Ptt};
 use crate::{audio, config, discovery, keys, net, room, session};
 
 /// Bind the socket and start audio, replacing whatever was running.
@@ -449,6 +449,34 @@ pub fn set_headphones(app: tauri::AppHandle, on: bool) -> Result<(), String> {
     config::save(&app, &cfg).map_err(|e| format!("{e:#}"))?;
     crate::audio::HEADPHONES.store(on, Ordering::Relaxed);
     Ok(())
+}
+
+/// Switch do-not-disturb, from wherever: the window's switch, the tray item.
+///
+/// One place does all three things a switch means — the live flag the playback
+/// callback and heartbeat read, the tray tick, and the event that tells the
+/// window — so no path can do two of them and forget the third. Nothing is
+/// saved: see `audio::DND` for why it starts off at every launch.
+pub fn apply_dnd(app: &tauri::AppHandle, on: bool) {
+    audio::DND.store(on, Ordering::Relaxed);
+    if let Some(item) = app.try_state::<DndItem>() {
+        let _ = item.0.set_checked(on);
+    }
+    eprintln!("[app] do not disturb {}", if on { "on" } else { "off" });
+    crate::notify::dnd(on);
+}
+
+/// Turn do-not-disturb on or off from the window.
+#[tauri::command]
+pub fn set_dnd(app: tauri::AppHandle, on: bool) {
+    apply_dnd(&app, on);
+}
+
+/// Whether do-not-disturb is on. Asked once when the window loads; after that
+/// the `dnd` event keeps it in step with the tray.
+#[tauri::command]
+pub fn dnd_get() -> bool {
+    audio::DND.load(Ordering::Relaxed)
 }
 
 /// Save which sounds play and how loud. The window plays them, so there is

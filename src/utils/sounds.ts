@@ -29,6 +29,18 @@ export const setSoundPrefs = (next: Sounds) => {
 	prefs = next;
 };
 
+/// Do-not-disturb. Above every per-sound switch: it is one switch for "leave
+/// me alone", and a chime that still played because its own switch was on
+/// would make it a liar. Set by `useDnd`; the toast in `useMessages` asks it
+/// too. Not saved — see `audio::DND` in Rust.
+let quiet = false;
+
+export const setQuiet = (on: boolean) => {
+	quiet = on;
+};
+
+export const isQuiet = () => quiet;
+
 let ctx: AudioContext | null = null;
 
 /// `level` scales one sound against the others: a key tick should sit well
@@ -109,9 +121,9 @@ const SWITCH: Record<SoundName, keyof Omit<Sounds, 'volume'>> = {
 	online: 'presence'
 };
 
-/// Play a sound if its switch is on.
+/// Play a sound if its switch is on and do-not-disturb is off.
 export const sound = (name: SoundName) => {
-	if (prefs[SWITCH[name]]) SHAPES[name]();
+	if (!quiet && prefs[SWITCH[name]]) SHAPES[name]();
 };
 
 /// Play a sound whatever its switch says, for the Test buttons. Volume still

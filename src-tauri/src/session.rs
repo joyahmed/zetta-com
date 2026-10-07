@@ -189,6 +189,9 @@ impl Session {
             // showing a version for a peer that is greyed out would be
             // remembering rather than reporting.
             p.version = self.net.version_of(p.addr);
+            // Also only from the socket, and it lapses with presence: a peer
+            // not heard from for HEARD_TIMEOUT is gone, not busy.
+            p.busy = self.net.busy(p.addr);
             // Your own name wins over both. A PC name is what the machine calls
             // itself; this is what you call the person sitting at it, and it is
             // the only one anybody chose on purpose.
@@ -238,6 +241,7 @@ fn manual_peers(manual: &[String]) -> Vec<discovery::Peer> {
                 talking: false,
                 manual: true,
                 version: None,
+                busy: false,
             }),
             Err(e) => {
                 eprintln!("[net] manual peer {entry}: {e:#}");

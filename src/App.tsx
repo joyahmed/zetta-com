@@ -4,6 +4,7 @@ import { Alert } from './components/Alert';
 import { Connection } from './components/Connection';
 import { Devices } from './components/Devices';
 import { Diagnostics } from './components/Diagnostics';
+import { BusyNote, DndOn } from './components/Dnd';
 import { Messages } from './components/Messages';
 import { Modal } from './components/Modal';
 import { Nav } from './components/Nav';
@@ -25,6 +26,7 @@ import { useShortcuts } from './hooks/useShortcuts';
 import { useSounds } from './hooks/useSounds';
 import { useStartup } from './hooks/useStartup';
 import { useDevices } from './hooks/useDevices';
+import { useDnd } from './hooks/useDnd';
 import { useGroups } from './hooks/useGroups';
 import { useRoom } from './hooks/useRoom';
 import { GROUP, useTarget } from './hooks/useTarget';
@@ -61,6 +63,7 @@ const App = () => {
 	const devices = useDevices(setError);
 	const room = useRoom(setError);
 	const startup = useStartup(setError);
+	const { dnd, setDnd } = useDnd(setError);
 	const sounds = useSounds(peers, running, setError);
 	const {
 		shortcuts,
@@ -83,6 +86,21 @@ const App = () => {
 				? target.slice(GROUP.length)
 				: (peers.find(p => p.addr === target)?.name ?? target);
 
+	// Who among the people aimed at is on do-not-disturb, live ones only — a
+	// gone machine is already shown as gone. Everyone is left out on purpose:
+	// one busy PC in a room of ten is not news every time you talk to all.
+	const aimed =
+		target === null
+			? []
+			: target.startsWith(GROUP)
+				? peers.filter(p =>
+						groups
+							.find(g => GROUP + g.name === target)
+							?.members.includes(p.addr)
+					)
+				: peers.filter(p => p.addr === target);
+	const busy = aimed.filter(p => p.live && p.busy);
+
 	return (
 		// h-screen rather than min-h-screen: the log sizes itself against the
 		// window, and a container that can grow past it has nothing to size
@@ -96,7 +114,9 @@ const App = () => {
 					onAddPc: () => setShowAddPc(true),
 					onShortcuts: () => setShowShortcuts(true),
 					onSettings: () => setShowSettings(true),
-					onDiagnostics: () => setShowDiagnostics(true)
+					onDiagnostics: () => setShowDiagnostics(true),
+					dnd,
+					onDnd: setDnd
 				}}
 			/>
 
@@ -109,7 +129,18 @@ const App = () => {
 			<main className='mx-auto flex min-h-0 w-full max-w-md flex-1 flex-col gap-3 p-4'>
 				{error && <Alert {...{ message: error }} />}
 
+				{dnd && <DndOn {...{ onOff: () => setDnd(false) }} />}
+
 				{running && <TalkBar {...{ held, key_: 'F8', to }} />}
+
+				{running && busy.length > 0 && (
+					<BusyNote
+						{...{
+							who: busy.map(p => p.name).join(', '),
+							many: busy.length > 1
+						}}
+					/>
+				)}
 
 				<Targets
 					{...{

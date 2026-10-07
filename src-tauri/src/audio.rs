@@ -757,9 +757,36 @@ fn build_capture(
 /// be live — flipping it must not rebuild the audio pipeline.
 pub static HEADPHONES: AtomicBool = AtomicBool::new(false);
 
+/// Do-not-disturb: nobody's voice plays here, and the others are told so.
+///
+/// Same shape as `HEADPHONES` and for the same reasons — live, process-wide,
+/// read by the playback callback every 10 ms and by the heartbeat thread every
+/// two seconds, so flipping it rebuilds nothing. Your own talking is untouched:
+/// DND is about what reaches you, not what you send.
+///
+/// ⛔ Never saved, and false at every launch. A DND left on by mistake and
+/// restored after a reboot would swallow every spoken instruction with nothing
+/// on screen to explain it until somebody noticed; starting off costs one click
+/// for whoever really wanted it on.
+pub static DND: AtomicBool = AtomicBool::new(false);
+
 /// Whether playback is silenced right now.
 fn muted(transmit: &AtomicBool) -> bool {
-    transmit.load(Ordering::Relaxed) && !HEADPHONES.load(Ordering::Relaxed)
+    silenced(
+        transmit.load(Ordering::Relaxed),
+        HEADPHONES.load(Ordering::Relaxed),
+        DND.load(Ordering::Relaxed),
+    )
+}
+
+/// The rule behind `muted`, without the statics, so it can be tested without
+/// one test's switch leaking into another running on the next thread.
+///
+/// DND silences everything; otherwise talking silences, unless headphones are
+/// on. Silenced playback also drains the ring (see the callbacks), so turning
+/// DND off plays what arrives next, not a backlog of what was said meanwhile.
+fn silenced(transmitting: bool, headphones: bool, dnd: bool) -> bool {
+    dnd || (transmitting && !headphones)
 }
 
 /// `in_rx` → Opus → ring B → speakers. Owns ring B entirely.
@@ -1305,6 +1332,18 @@ mod tests {
         assert!(!muted(&talking));
         HEADPHONES.store(false, Ordering::Relaxed);
         assert!(muted(&talking));
+    }
+
+    #[test]
+    fn dnd_silences_playback_whatever_else_is_set() {
+        for transmitting in [false, true] {
+            for headphones in [false, true] {
+                assert!(silenced(transmitting, headphones, true));
+            }
+        }
+        assert!(!silenced(false, false, false));
+        assert!(silenced(true, false, false));
+        assert!(!silenced(true, true, false));
     }
 
     #[test]

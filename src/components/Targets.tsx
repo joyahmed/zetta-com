@@ -1,5 +1,6 @@
 import { GROUP } from '../hooks/useTarget';
 import { Dot } from './Dot';
+import { Moon } from './Moon';
 
 /// Who you are addressing — one row, scrolling sideways.
 ///
@@ -18,7 +19,8 @@ const Chip = ({
 	selected,
 	onClick,
 	title,
-	slot
+	slot,
+	busy
 }: {
 	label: string;
 	live: boolean;
@@ -30,6 +32,9 @@ const Chip = ({
 	/// so which PCs have one is a fact about the roster you are looking at, and
 	/// it changes as machines come and go.
 	slot?: number;
+	/// On do-not-disturb. A small moon and nothing more: the strip is for
+	/// aiming, and the note under the talk bar says what it means.
+	busy?: boolean;
 }) => (
 	<button
 		type='button'
@@ -43,6 +48,11 @@ const Chip = ({
 	>
 		<Dot {...{ on: live }} />
 		<span className='max-w-32 truncate'>{label}</span>
+		{busy && (
+			<span className='text-faint' aria-label='busy'>
+				<Moon {...{ size: 11 }} />
+			</span>
+		)}
 		{slot !== undefined && (
 			<span className='font-mono text-[0.65rem] text-faint'>{slot}</span>
 		)}
@@ -118,10 +128,11 @@ export const Targets = ({
 							selected: target === p.addr,
 							onClick: () => onTarget(p.addr),
 							slot: i < 9 ? i + 1 : undefined,
+							busy: p.live && p.busy,
 							// The position is what Ctrl+Alt+n aims at, so it
 							// belongs where you can check it without opening
 							// the shortcut list.
-							title: `${p.addr}${i < 9 ? ` · Ctrl+${i + 1}` : ''}`
+							title: `${p.addr}${i < 9 ? ` · Ctrl+${i + 1}` : ''}${p.live && p.busy ? ' · busy (do not disturb)' : ''}`
 						}}
 					/>
 				))}

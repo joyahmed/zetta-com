@@ -59,6 +59,17 @@ pub const KIND_VERSION: u8 = 3;
 /// answers. A new kind for the same reason as `KIND_VERSION`: older builds skip
 /// it, so they never send one and never trip over one.
 pub const KIND_ACK: u8 = 4;
+/// "I am busy" (payload `1`) or "I am available" (payload `0`): this machine's
+/// do-not-disturb switch, told to everyone so they know their voice will not
+/// be heard here. A new kind, not a byte on the heartbeat and not a `VER` bump,
+/// for exactly the reasons on `KIND_VERSION` — an older build counts it as a
+/// sign of life and ignores the rest.
+///
+/// Sent with every heartbeat, not only when it changes. It is one byte, and
+/// repeating it means a machine that appears later, or that missed the one
+/// packet saying it changed, is right within two seconds with no bookkeeping
+/// about who has been told.
+pub const KIND_STATUS: u8 = 5;
 
 /// How many (sender, message id) pairs to remember, to drop a text that arrives
 /// twice. The room seal proves a packet came from inside the room, not that it
@@ -231,6 +242,13 @@ pub struct Handle {
     /// mDNS — a machine that is discovered but not reachable has told us
     /// nothing, and claiming a version for it would be inventing one.
     versions: Arc<Mutex<HashMap<SocketAddr, String>>>,
+    /// When each address last said it is busy (do-not-disturb on).
+    ///
+    /// A time rather than a flag, so it expires on its own: a machine that
+    /// switched DND on and then went off the network would otherwise show as
+    /// busy forever. Saying "available" removes the entry at once, and silence
+    /// longer than `HEARD_TIMEOUT` makes it stale — the same rule as presence.
+    busy: Arc<Mutex<HashMap<SocketAddr, Instant>>>,
     /// When audio — as opposed to a heartbeat — last arrived from each address.
     ///
     /// This is how the UI knows who is speaking, and it needs no flag in the
@@ -415,6 +433,13 @@ impl Handle {
         map.get(&addr).cloned()
     }
 
+    /// Whether this address has said it is on do-not-disturb, recently enough
+    /// to still believe it. A peer not heard from for `HEARD_TIMEOUT` is not
+    /// busy, it is gone, and the roster already says that.
+    pub fn busy(&self, addr: SocketAddr) -> bool {
+        stamped_within(&self.busy, addr, HEARD_TIMEOUT)
+    }
+
     /// Whether audio arrived from this address recently enough to call them
     /// currently speaking.
     pub fn talking(&self, addr: SocketAddr) -> bool {
@@ -543,6 +568,33 @@ fn unix_millis() -> u64 {
 /// Shared by presence and talking: both ask "was this address stamped recently".
 /// Computed at read time so it cannot be stale between polls the way a swept
 /// flag can.
+/// The one-byte body of a `KIND_STATUS` packet.
+fn status_payload(busy: bool) -> [u8; 1] {
+    [u8::from(busy)]
+}
+
+/// Read a `KIND_STATUS` body. `None` for anything but exactly one byte of 0 or
+/// 1: a future build that adds to it should be ignored by this one rather than
+/// half-understood, and a wrong guess here would show somebody as busy who is
+/// not.
+fn parse_status(body: &[u8]) -> Option<bool> {
+    match body {
+        [0] => Some(false),
+        [1] => Some(true),
+        _ => None,
+    }
+}
+
+/// Record what a status packet said. Busy stamps the time; available removes
+/// the entry, so the change shows on the next poll instead of after a timeout.
+fn note_status(map: &mut HashMap<SocketAddr, Instant>, from: SocketAddr, busy: bool) {
+    if busy {
+        map.insert(from, Instant::now());
+    } else {
+        map.remove(&from);
+    }
+}
+
 fn stamped_within(
     map: &Arc<Mutex<HashMap<SocketAddr, Instant>>>,
     addr: SocketAddr,
@@ -808,6 +860,7 @@ pub fn start(
         Arc::new(Mutex::new(HashMap::new()));
     let names: Arc<Mutex<HashMap<SocketAddr, String>>> = Arc::new(Mutex::new(HashMap::new()));
     let versions: Arc<Mutex<HashMap<SocketAddr, String>>> = Arc::new(Mutex::new(HashMap::new()));
+    let busy: Arc<Mutex<HashMap<SocketAddr, Instant>>> = Arc::new(Mutex::new(HashMap::new()));
     let messages: Arc<Mutex<VecDeque<Message>>> = Arc::new(Mutex::new(VecDeque::new()));
     let message_id = Arc::new(AtomicU64::new(1));
 
@@ -867,6 +920,20 @@ pub fn start(
             let vn = version.len().min(MAX_PAYLOAD);
             let version = frame(hb_room.as_deref(), &vbuf[..HEADER_LEN], &version[..vn]);
 
+            // Both answers to "are you busy?", sealed once up front, so each
+            // tick only has to pick one. `audio::DND` is read every tick, so
+            // the others hear about a change within one heartbeat.
+            let mut sbuf = [0u8; HEADER_LEN];
+            Header {
+                ver: VER,
+                kind: KIND_STATUS,
+                seq: 0,
+                ts: 0,
+            }
+            .write(&mut sbuf);
+            let available = frame(hb_room.as_deref(), &sbuf, &status_payload(false));
+            let busy = frame(hb_room.as_deref(), &sbuf, &status_payload(true));
+
             let mut tick = 0u32;
             // Who has already been told. Without this the first version packet
             // goes out on tick zero, when the roster is still empty and nobody
@@ -886,9 +953,17 @@ pub fn start(
                     };
                     t.known.clone()
                 };
+                let status = if crate::audio::DND.load(Ordering::Relaxed) {
+                    &busy
+                } else {
+                    &available
+                };
                 for addr in known {
                     if let Err(e) = hb_sock.send_to(&buf, addr) {
                         eprintln!("[net] heartbeat to {addr} failed: {e}");
+                    }
+                    if let Some(s) = status {
+                        let _ = hb_sock.send_to(s, addr);
                     }
                     // Immediately for an address never sent to before, and once
                     // every VERSION_EVERY heartbeats after that. A version
@@ -921,6 +996,7 @@ pub fn start(
     let rx_last_audio = last_audio.clone();
     let rx_names = names.clone();
     let rx_versions = versions.clone();
+    let rx_busy = busy.clone();
     let rx_messages = messages.clone();
     // Shared with the Handle rather than a second counter, so sent and received
     // lines interleave in the order they actually happened.
@@ -1011,6 +1087,23 @@ pub fn start(
                         eprintln!("[net] {from} is on {v}");
                     }
                     map.insert(from, v);
+                }
+            }
+
+            // Do-not-disturb on or off at their end. Status-only, like the
+            // version: nothing else in the loop needs to see it.
+            if h.kind == KIND_STATUS {
+                if let Some(on) = parse_status(&buf[HEADER_LEN..len]) {
+                    let mut map = match rx_busy.lock() {
+                        Ok(m) => m,
+                        Err(e) => e.into_inner(),
+                    };
+                    // Logged only on a change, for the same reason as versions:
+                    // one arrives from everyone every two seconds.
+                    if map.contains_key(&from) != on {
+                        eprintln!("[net] {from} is {}", if on { "busy" } else { "available" });
+                    }
+                    note_status(&mut map, from, on);
                 }
             }
 
@@ -1119,6 +1212,7 @@ pub fn start(
         target: Arc::new(Mutex::new(Aim::All)),
         names,
         versions,
+        busy,
         heard,
         last_audio,
         messages,
@@ -1481,5 +1575,51 @@ mod loopback {
         let mut buf = [0u8; 64];
         assert!(raw.recv_from(&mut buf).is_err(), "an id of 0 must not be answered");
         assert_eq!(b.messages().iter().filter(|m| m.text == "old").count(), 2);
+    }
+
+    #[test]
+    fn status_payload_round_trips_and_refuses_anything_else() {
+        assert_eq!(parse_status(&status_payload(true)), Some(true));
+        assert_eq!(parse_status(&status_payload(false)), Some(false));
+        for bad in [&[][..], &[2], &[1, 0], &[0, 0], &[255]] {
+            assert_eq!(parse_status(bad), None, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn busy_clears_on_available_and_expires_on_silence() {
+        let a: SocketAddr = "10.0.0.1:9000".parse().unwrap();
+        let map = Arc::new(Mutex::new(HashMap::new()));
+        note_status(&mut map.lock().unwrap(), a, true);
+        assert!(stamped_within(&map, a, HEARD_TIMEOUT));
+        note_status(&mut map.lock().unwrap(), a, false);
+        assert!(!stamped_within(&map, a, HEARD_TIMEOUT));
+        // Said busy, then went quiet: stale after HEARD_TIMEOUT, not busy forever.
+        let long_ago = Instant::now() - HEARD_TIMEOUT - Duration::from_secs(1);
+        map.lock().unwrap().insert(a, long_ago);
+        assert!(!stamped_within(&map, a, HEARD_TIMEOUT));
+    }
+
+    #[test]
+    fn a_status_packet_marks_the_sender_busy_and_then_available() {
+        let (tx, _rx) = mpsc::sync_channel(64);
+        let port_b = free();
+        let b = start(port_b, "", "", "B", tx).unwrap();
+        let raw = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let me = raw.local_addr().unwrap();
+
+        let mut packet = [0u8; HEADER_LEN + 1];
+        Header { ver: VER, kind: KIND_STATUS, seq: 0, ts: 0 }.write(&mut packet);
+        packet[HEADER_LEN] = 1;
+        raw.send_to(&packet, ("127.0.0.1", port_b)).unwrap();
+        thread::sleep(Duration::from_millis(300));
+        assert!(b.busy(me));
+        // Still a sign of life: an unknown-to-old-builds kind counts as heard.
+        assert!(b.heard_within(me, HEARD_TIMEOUT));
+
+        packet[HEADER_LEN] = 0;
+        raw.send_to(&packet, ("127.0.0.1", port_b)).unwrap();
+        thread::sleep(Duration::from_millis(300));
+        assert!(!b.busy(me));
     }
 }

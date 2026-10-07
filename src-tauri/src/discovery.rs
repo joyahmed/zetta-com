@@ -55,6 +55,10 @@ pub struct Peer {
     /// on a network where nobody has updated, every entry is `None` and there is
     /// nothing wrong.
     pub version: Option<String>,
+    /// Do-not-disturb is on at their end: they will see text, not hear voice.
+    /// From the socket like `version`, and false for an older build that never
+    /// says — which is right, since an older build has no DND to be on.
+    pub busy: bool,
 }
 
 struct Entry {
@@ -266,6 +270,7 @@ pub fn start(port: u16) -> Result<Discovery> {
                                     talking: false,
                                     manual: false,
                                     version: None,
+                                    busy: false,
                                 },
                                 seen: Instant::now(),
                             },

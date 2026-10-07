@@ -28,6 +28,14 @@ pub fn voice_start(from: std::net::SocketAddr) {
     }
 }
 
+/// Do-not-disturb was switched, from the tray or the window. Sent either way,
+/// so the window never has to work out which of the two it was.
+pub fn dnd(on: bool) {
+    if let Some(app) = APP.get() {
+        let _ = app.emit("dnd", on);
+    }
+}
+
 /// This machine's own talk key went down (`true`) or up (`false`).
 pub fn talk_key(down: bool) {
     if let Some(app) = APP.get() {
