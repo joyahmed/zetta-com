@@ -159,6 +159,10 @@ export const DEMO_GROUPS: Group[] = [
 	{ name: 'Front desk', members: ['192.168.0.118:9001', '192.168.0.126:9001'] }
 ];
 
+/// One PC turned up, so a screenshot of its Edit panel shows a value other than
+/// the default.
+export const DEMO_VOLUMES: Record<string, number> = { '192.168.0.126:9001': 1.5 };
+
 export const DEMO_ROOM = {
 	passphrase: 'cedar-harbor-quartz-thistle-ivory-9f4c2ab7e1d05836',
 	code: '7B2E'

@@ -32,6 +32,8 @@ type Config = {
 	sounds: Sounds;
 	/// Addresses whose going offline and coming back plays a tone.
 	watched: string[];
+	/// How loud each PC is to you, 0 to 2, by address. Missing means 1.
+	volumes: Record<string, number>;
 	groups: Group[];
 };
 
@@ -271,6 +273,9 @@ type PcsProps = {
 	/// Addresses that play a tone when they go offline or come back.
 	watched: string[];
 	onWatch: (addr: string, on: boolean) => Promise<void>;
+	/// Per-person volume as a gain, 0 to 2, by address. Missing means 1.
+	volumes: Record<string, number>;
+	onVolume: (addr: string, gain: number) => Promise<void>;
 };
 
 type ModalProps = {

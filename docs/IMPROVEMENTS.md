@@ -207,6 +207,7 @@ Same files: `net.rs` (`set_target` `:260`, `recipients` `:274`), `keys.rs` `aim`
 ## Phase F — Can wait
 
 > **Status:** Do-not-disturb built — `6dfcaca`. New `KIND_STATUS = 5` beside the heartbeat, not in it, and no `VER` bump. Not saved: off at every launch. Not in a release yet; not yet tried on two machines.
+> **Status:** Per-person volume built — `39c92d5` (0–200% per PC, in Settings → PCs → Edit; live, saved by address). Not yet heard with real audio.
 
 - [x] Do-not-disturb: a tray switch that stops playback and sounds, and tells others in the heartbeat.
 - [ ] Per-person volume: a gain per source in the mixer (`audio.rs:940-951`).

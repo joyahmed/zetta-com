@@ -18,11 +18,15 @@ export const Pcs = ({
 	onRemove,
 	onReorder,
 	watched,
-	onWatch
+	onWatch,
+	volumes,
+	onVolume
 }: PcsProps) => {
 	const [editing, setEditing] = useState<string | null>(null);
 	const [name, setName] = useState('');
 	const [addr, setAddr] = useState('');
+	// The percent shown while the slider is dragged, before it is saved.
+	const [shown, setShown] = useState<number | null>(null);
 
 	// Manual entries have to be merged in rather than read off the roster: the
 	// roster is empty while the transport is stopped, and a PC you added should
@@ -57,6 +61,7 @@ export const Pcs = ({
 		setEditing(r.addr);
 		setName(r.name);
 		setAddr(r.addr);
+		setShown(null);
 	};
 
 	/// Only what actually changed is sent. Each of these restarts the transport,
@@ -136,6 +141,34 @@ export const Pcs = ({
 								not yours to change
 							</p>
 						)}
+
+						{/* Saved on release, like the sound volume: each save
+						    is a write of the whole config file. It applies at
+						    once and is separate from Save, which is for the
+						    name and address. */}
+						<label className='flex flex-col gap-1'>
+							<span className='text-xs font-medium tracking-wide text-muted uppercase'>
+								Volume
+							</span>
+							<span className='flex items-center gap-3'>
+								<input
+									type='range'
+									min={0}
+									max={200}
+									step={10}
+									defaultValue={Math.round((volumes[r.addr] ?? 1) * 100)}
+									key={volumes[r.addr] ?? 1}
+									onChange={e => setShown(Number(e.currentTarget.value))}
+									onPointerUp={e => onVolume(r.addr, Number(e.currentTarget.value) / 100)}
+									onKeyUp={e => onVolume(r.addr, Number(e.currentTarget.value) / 100)}
+									aria-label={`Volume for ${r.name}`}
+									className='min-w-0 flex-1 accent-accent'
+								/>
+								<span className='w-10 shrink-0 text-right font-mono text-xs text-muted'>
+									{shown ?? Math.round((volumes[r.addr] ?? 1) * 100)}%
+								</span>
+							</span>
+						</label>
 
 						<div className='flex gap-2'>
 							<button

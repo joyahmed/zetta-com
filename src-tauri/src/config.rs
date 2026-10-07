@@ -34,6 +34,7 @@ impl Default for Config {
             peer: String::new(),
             manual: Vec::new(),
             labels: HashMap::new(),
+            volumes: HashMap::new(),
             talk_shortcut: default_talk_shortcut(),
             shortcuts: HashMap::new(),
             order: Vec::new(),
@@ -154,6 +155,11 @@ pub struct Config {
     /// desk". By address, like labels, so a renamed PC stays in its groups.
     #[serde(default)]
     pub groups: Vec<Group>,
+
+    /// How loud each person is to this listener, 0.0 to 2.0, by address like
+    /// labels. Missing means 1.0. See `audio::GAINS`.
+    #[serde(default)]
+    pub volumes: HashMap<String, f32>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -340,6 +346,13 @@ mod tests {
         assert!(!cfg.headphones);
         assert!(cfg.watched.is_empty());
         assert!(cfg.sounds.message && cfg.sounds.voice && !cfg.sounds.key);
+    }
+
+    #[test]
+    fn a_config_from_before_volumes_existed_loads_with_none() {
+        let old = r#"{"port":9001,"peer":"","manual":[],"talkShortcut":"F8"}"#;
+        let cfg: Config = serde_json::from_str(old).unwrap();
+        assert!(cfg.volumes.is_empty());
     }
 
     #[test]
