@@ -206,7 +206,9 @@ Same files: `net.rs` (`set_target` `:260`, `recipients` `:274`), `keys.rs` `aim`
 
 ## Phase F — Can wait
 
-- [ ] Do-not-disturb: a tray switch that stops playback and sounds, and tells others in the heartbeat.
+> **Status:** Do-not-disturb built — `6dfcaca`. New `KIND_STATUS = 5` beside the heartbeat, not in it, and no `VER` bump. Not saved: off at every launch. Not in a release yet; not yet tried on two machines.
+
+- [x] Do-not-disturb: a tray switch that stops playback and sounds, and tells others in the heartbeat.
 - [ ] Per-person volume: a gain per source in the mixer (`audio.rs:940-951`).
 - [ ] Refresh PLAN.md. It says "Updated 2026-08-09", and the "Required" section still says "no per-person keys" (`PLAN.md:296-297`), which the same file reverses higher up.
 - [ ] `tauri-specta`, so `types.d.ts` is generated from the Rust structs. Phases B–E each add fields there by hand.
