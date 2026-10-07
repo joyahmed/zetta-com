@@ -116,6 +116,11 @@ type Message = {
 	mine: boolean;
 	/// Unix milliseconds.
 	at: number;
+	/// Your own lines only: who it went to, and who has answered that it
+	/// arrived. Names where the roster knows them. A machine on a build older
+	/// than receipts never answers, so a short `heard` is not a failure.
+	to: string[];
+	heard: string[];
 };
 
 type MessagesProps = {

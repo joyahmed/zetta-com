@@ -55,6 +55,16 @@ pub const KIND_HEARTBEAT: u8 = 2;
 /// header, counts the packet as a sign of life, matches none of its cases, and
 /// carries on.
 pub const KIND_VERSION: u8 = 3;
+/// "Your message arrived." Header only, with `ts` set to the id of the text it
+/// answers. A new kind for the same reason as `KIND_VERSION`: older builds skip
+/// it, so they never send one and never trip over one.
+pub const KIND_ACK: u8 = 4;
+
+/// How many (sender, message id) pairs to remember, to drop a text that arrives
+/// twice. The room seal proves a packet came from inside the room, not that it
+/// is new — a recorded one replays perfectly — so this is what stops a replay
+/// from putting the same instruction on screen again.
+const RECENT_TEXTS: usize = 200;
 
 /// How many messages to keep. A log nobody can scroll forever is a log that
 /// cannot grow without bound while the app sits in the tray for a week.
@@ -156,6 +166,15 @@ pub struct Message {
     pub mine: bool,
     /// Unix milliseconds, stamped on arrival.
     pub at: u64,
+    /// The id it travelled under, carried in the header's `ts`. Zero for text
+    /// from a build older than receipts, which never set it.
+    #[serde(skip)]
+    pub wire: u32,
+    /// For your own lines: who it was sent to. Addresses here; the session
+    /// swaps in names.
+    pub to: Vec<String>,
+    /// For your own lines: who has answered that it arrived.
+    pub heard: Vec<String>,
 }
 
 #[derive(Default)]
@@ -416,6 +435,7 @@ impl Handle {
             return;
         }
         let targets = self.recipients();
+        let wire = fresh_id();
 
         let mut buf = [0u8; HEADER_LEN + MAX_PAYLOAD];
         Header {
@@ -425,7 +445,10 @@ impl Handle {
             // advancing that counter would punch holes in the reorder window
             // at the far end.
             seq: 0,
-            ts: 0,
+            // The message id, in a field text never used. Older builds ignore
+            // it, so receipts needed no new version — and a new version would
+            // have cut every older machine off entirely.
+            ts: wire,
         }
         .write(&mut buf);
         let Some(packet) = frame(self.room.as_deref(), &buf[..HEADER_LEN], bytes) else {
@@ -442,7 +465,7 @@ impl Handle {
             eprintln!("[net] text -> {} peer(s): {:?}", targets.len(), targets);
         }
 
-        for addr in targets {
+        for addr in &targets {
             if let Err(e) = self.socket.send_to(packet, addr) {
                 eprintln!("[net] text to {addr} failed: {e}");
             }
@@ -451,16 +474,20 @@ impl Handle {
         // Logged whether or not anybody was listening. A message that reached
         // nobody still happened, and hiding it would make an empty roster look
         // like a broken keyboard.
-        self.push_message(String::new(), text.to_string(), true);
+        let to = targets.iter().map(|a| a.to_string()).collect();
+        self.push_message(String::new(), text.to_string(), true, wire, to);
     }
 
-    fn push_message(&self, from: String, text: String, mine: bool) {
+    fn push_message(&self, from: String, text: String, mine: bool, wire: u32, to: Vec<String>) {
         let msg = Message {
             id: self.next_message_id.fetch_add(1, Ordering::Relaxed),
             from,
             text,
             mine,
             at: unix_millis(),
+            wire,
+            to,
+            heard: Vec::new(),
         };
         let mut log = match self.messages.lock() {
             Ok(m) => m,
@@ -516,6 +543,52 @@ fn stamped_within(
         Err(e) => e.into_inner(),
     };
     map.get(&addr).is_some_and(|t| t.elapsed() < within)
+}
+
+/// A message id: random, so two machines and two runs never collide, and never
+/// zero, which is what an older build's text carries.
+fn fresh_id() -> u32 {
+    let mut b = [0u8; 4];
+    let _ = getrandom::fill(&mut b);
+    u32::from_be_bytes(b).max(1)
+}
+
+/// Record that `from` received our message `wire`. False when there is no such
+/// message, or it already counted them.
+fn mark_heard(log: &mut VecDeque<Message>, wire: u32, from: &str) -> bool {
+    if wire == 0 {
+        return false;
+    }
+    match log.iter_mut().rev().find(|m| m.mine && m.wire == wire) {
+        Some(m) if !m.heard.iter().any(|h| h == from) => {
+            m.heard.push(from.to_string());
+            true
+        }
+        _ => false,
+    }
+}
+
+/// The last few texts seen, by sender and id.
+#[derive(Default)]
+struct Recent(VecDeque<(SocketAddr, u32)>);
+
+impl Recent {
+    /// True the first time a (sender, id) pair is seen. Always true for id 0:
+    /// an older build sends every text as 0, and dropping all but its first
+    /// would be far worse than letting its replays through.
+    fn first_time(&mut self, from: SocketAddr, wire: u32) -> bool {
+        if wire == 0 {
+            return true;
+        }
+        if self.0.contains(&(from, wire)) {
+            return false;
+        }
+        if self.0.len() >= RECENT_TEXTS {
+            self.0.pop_front();
+        }
+        self.0.push_back((from, wire));
+        true
+    }
 }
 
 /// The address with the latest stamp.
@@ -826,6 +899,7 @@ pub fn start(
         // gaps and throw most of both away.
         let mut windows: HashMap<SocketAddr, (Jitter, Option<u16>)> = HashMap::new();
         let mut ready: Vec<Option<Vec<u8>>> = Vec::with_capacity(SLOTS);
+        let mut recent = Recent::default();
 
         while !rx_stop.load(Ordering::Relaxed) {
             let (len, from) = match socket.recv_from(&mut buf) {
@@ -909,7 +983,31 @@ pub fn start(
 
             rx_counters.rx.fetch_add(1, Ordering::Relaxed);
 
+            if h.kind == KIND_ACK {
+                let mut log = match rx_messages.lock() {
+                    Ok(m) => m,
+                    Err(e) => e.into_inner(),
+                };
+                mark_heard(&mut log, h.ts, &from.to_string());
+                continue;
+            }
+
             if h.kind == KIND_TEXT && len > HEADER_LEN {
+                // Answered before the duplicate check, and every time. If the
+                // first answer was lost, answering again is the only way the
+                // sender ever finds out it arrived.
+                if h.ts != 0 {
+                    let mut ack = [0u8; HEADER_LEN];
+                    Header { ver: VER, kind: KIND_ACK, seq: 0, ts: h.ts }.write(&mut ack);
+                    if let Some(packet) = frame(rx_room.as_deref(), &ack, &[]) {
+                        let _ = socket.send_to(&packet, from);
+                    }
+                }
+                if !recent.first_time(from, h.ts) {
+                    eprintln!("[net] text <- {from} again (id {}), dropped", h.ts);
+                    continue;
+                }
+
                 // Lossy: a message with a bad byte in it is still worth
                 // showing, and refusing to display anything is a worse
                 // failure than a replacement character.
@@ -921,6 +1019,9 @@ pub fn start(
                     text,
                     mine: false,
                     at: unix_millis(),
+                    wire: h.ts,
+                    to: Vec::new(),
+                    heard: Vec::new(),
                 };
                 let mut log = match rx_messages.lock() {
                     Ok(m) => m,
@@ -1137,6 +1238,78 @@ mod tests {
         assert_eq!(newest(&map), Some(a));
     }
 
+    fn mine(wire: u32) -> Message {
+        Message {
+            id: 0,
+            from: String::new(),
+            text: "x".into(),
+            mine: true,
+            at: 0,
+            wire,
+            to: vec!["a".into(), "b".into()],
+            heard: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_receipt_marks_the_right_message_once() {
+        let mut log: VecDeque<Message> = [mine(7), mine(9)].into();
+        assert!(mark_heard(&mut log, 9, "a"));
+        assert!(!mark_heard(&mut log, 9, "a"));
+        assert!(mark_heard(&mut log, 9, "b"));
+        assert_eq!(log[1].heard, ["a", "b"]);
+        assert!(log[0].heard.is_empty());
+    }
+
+    #[test]
+    fn a_receipt_never_marks_a_received_line_or_an_old_build() {
+        let mut theirs = mine(7);
+        theirs.mine = false;
+        let mut log: VecDeque<Message> = [theirs, mine(0)].into();
+        assert!(!mark_heard(&mut log, 7, "a"));
+        assert!(!mark_heard(&mut log, 0, "a"));
+        assert!(!mark_heard(&mut log, 5, "a"));
+    }
+
+    #[test]
+    fn a_replayed_text_is_dropped() {
+        let a: SocketAddr = "10.0.0.1:9001".parse().unwrap();
+        let b: SocketAddr = "10.0.0.2:9001".parse().unwrap();
+        let mut r = Recent::default();
+        assert!(r.first_time(a, 5));
+        assert!(!r.first_time(a, 5));
+        // The same id from another machine is a different message.
+        assert!(r.first_time(b, 5));
+    }
+
+    #[test]
+    fn an_old_build_is_never_deduplicated() {
+        let a: SocketAddr = "10.0.0.1:9001".parse().unwrap();
+        let mut r = Recent::default();
+        assert!(r.first_time(a, 0));
+        assert!(r.first_time(a, 0));
+    }
+
+    #[test]
+    fn recent_forgets_the_oldest() {
+        let a: SocketAddr = "10.0.0.1:9001".parse().unwrap();
+        let mut r = Recent::default();
+        let n = RECENT_TEXTS as u32;
+        for id in 1..=n + 1 {
+            r.first_time(a, id);
+        }
+        // 1 was pushed out by n + 1; n is still remembered.
+        assert!(r.first_time(a, 1));
+        assert!(!r.first_time(a, n));
+    }
+
+    #[test]
+    fn ids_are_never_zero() {
+        for _ in 0..1000 {
+            assert_ne!(fresh_id(), 0);
+        }
+    }
+
     #[test]
     fn frame_without_a_room_is_plain() {
         let h = header(5);
@@ -1152,5 +1325,104 @@ mod tests {
         let f = frame(Some(&room), &h, b"hello").unwrap();
         assert_eq!(&f[..HEADER_LEN], &h);
         assert_eq!(room.open(&h, &f[HEADER_LEN..]).unwrap(), b"hello");
+    }
+}
+
+/// Two real transports on this machine's loopback, talking over UDP. Slower
+/// than the unit tests above (each waits up to two seconds) and worth it: this
+/// is the only test that sends a receipt over a socket and reads it back.
+#[cfg(test)]
+mod loopback {
+    use super::*;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    /// A port nothing is using right now. Fixed numbers are not safe on
+    /// Windows, which reserves whole ranges for Hyper-V without saying so.
+    fn free() -> u16 {
+        UdpSocket::bind("0.0.0.0:0").unwrap().local_addr().unwrap().port()
+    }
+
+    fn pair(pass: &str) -> (Handle, Handle, u16) {
+        let (a, b) = (free(), free());
+        let (tx, _rx) = mpsc::sync_channel(64);
+        let ha = start(a, "", pass, "A", tx.clone()).unwrap();
+        let hb = start(b, "", pass, "B", tx).unwrap();
+        let addr_b: SocketAddr = format!("127.0.0.1:{b}").parse().unwrap();
+        let addr_a: SocketAddr = format!("127.0.0.1:{a}").parse().unwrap();
+        ha.set_targets(vec![addr_b], vec![addr_b]);
+        hb.set_targets(vec![addr_a], vec![addr_a]);
+        (ha, hb, b)
+    }
+
+    /// Poll until `f` is true or two seconds pass.
+    fn within(f: impl Fn() -> bool) -> bool {
+        for _ in 0..40 {
+            if f() {
+                return true;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+        false
+    }
+
+    #[test]
+    fn a_text_comes_back_with_a_receipt() {
+        let (a, b, port_b) = pair("");
+        let addr_b = format!("127.0.0.1:{port_b}");
+        a.send_text("stand-up in five");
+        assert!(within(|| b.messages().iter().any(|m| m.text == "stand-up in five")));
+        assert!(within(|| a.messages()[0].heard == [addr_b.clone()]));
+        assert_eq!(a.messages()[0].to, [addr_b]);
+    }
+
+    #[test]
+    fn receipts_work_inside_a_room() {
+        let (a, b, _) = pair("amber-flint-cedar");
+        a.send_text("sealed");
+        assert!(within(|| b.messages().iter().any(|m| m.text == "sealed")));
+        assert!(within(|| a.messages()[0].heard.len() == 1));
+    }
+
+    #[test]
+    fn a_replayed_packet_shows_once_and_is_still_answered() {
+        let (tx, _rx) = mpsc::sync_channel(64);
+        let port_b = free();
+        let b = start(port_b, "", "", "B", tx).unwrap();
+        let raw = UdpSocket::bind("127.0.0.1:0").unwrap();
+        raw.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+
+        let mut packet = [0u8; HEADER_LEN + 3];
+        Header { ver: VER, kind: KIND_TEXT, seq: 0, ts: 42 }.write(&mut packet);
+        packet[HEADER_LEN..].copy_from_slice(b"go!");
+        for _ in 0..2 {
+            raw.send_to(&packet, ("127.0.0.1", port_b)).unwrap();
+            // Every copy is answered, so a lost first answer is not final.
+            let mut buf = [0u8; 64];
+            let (n, _) = raw.recv_from(&mut buf).unwrap();
+            let h = Header::parse(&buf[..n]).unwrap();
+            assert_eq!((h.kind, h.ts), (KIND_ACK, 42));
+        }
+        thread::sleep(Duration::from_millis(200));
+        assert_eq!(b.messages().iter().filter(|m| m.text == "go!").count(), 1);
+    }
+
+    #[test]
+    fn an_old_build_text_is_shown_and_not_answered() {
+        let (tx, _rx) = mpsc::sync_channel(64);
+        let port_b = free();
+        let b = start(port_b, "", "", "B", tx).unwrap();
+        let raw = UdpSocket::bind("127.0.0.1:0").unwrap();
+        raw.set_read_timeout(Some(Duration::from_millis(500))).unwrap();
+
+        let mut packet = [0u8; HEADER_LEN + 3];
+        Header { ver: VER, kind: KIND_TEXT, seq: 0, ts: 0 }.write(&mut packet);
+        packet[HEADER_LEN..].copy_from_slice(b"old");
+        raw.send_to(&packet, ("127.0.0.1", port_b)).unwrap();
+        raw.send_to(&packet, ("127.0.0.1", port_b)).unwrap();
+
+        let mut buf = [0u8; 64];
+        assert!(raw.recv_from(&mut buf).is_err(), "an id of 0 must not be answered");
+        assert_eq!(b.messages().iter().filter(|m| m.text == "old").count(), 2);
     }
 }

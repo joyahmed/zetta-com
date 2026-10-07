@@ -72,7 +72,7 @@ Two things it does that most of the alternatives cannot:
 |---|---|
 | **Push to talk** | Hold `F8` and whoever is selected hears you. Nothing is transmitted unless the key is held. |
 | **One person or everyone** | `Ctrl+1…9` talks to a specific PC, `Ctrl+0` to the room, `F7` back to whoever spoke last. |
-| **Messages** | Type, or fire a preset with a key. They arrive as native notifications when the window is hidden. |
+| **Messages** | Type, or fire a preset with a key. They arrive as native notifications when the window is hidden. Each of yours shows a ✓ once everyone it went to has received it, or `✓ 3/6` while some have not — hover for names. A machine on a build before 1.5 never answers, so a missing ✓ is not a failure. |
 | **Finds everyone by itself** | mDNS discovery — no addresses to type on a normal network. |
 | **Sounds you can turn off** | A chime for a message you are not looking at, a blip when someone starts talking to you, and a tone when a PC you put a bell on goes offline or comes back. Each has its own switch, a Test button and one shared volume. |
 | **Reports absence** | A heartbeat every two seconds; somebody who goes quiet greys out within seven. It says who is *not* there, not just who is. |

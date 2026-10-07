@@ -15,6 +15,47 @@ const time = (ms: number) =>
 		hourCycle: 'h23'
 	});
 
+/// Under your own line: whether it arrived.
+///
+/// Never red for silence. A machine on a build older than receipts never
+/// answers, and "no answer" painted as failure would teach people to ignore
+/// the one state that does mean failure: sent to nobody at all.
+const Receipt = ({ to, heard }: { to: string[]; heard: string[] }) => {
+	if (to.length === 0) {
+		return (
+			<span className='shrink-0 text-xs whitespace-nowrap text-danger'>
+				nobody online
+			</span>
+		);
+	}
+	const waiting = to.filter(n => !heard.includes(n));
+	const title = [
+		heard.length > 0 && `Received by ${heard.join(', ')}`,
+		waiting.length > 0 && `No answer yet from ${waiting.join(', ')}`
+	]
+		.filter(Boolean)
+		.join('. ');
+	const label =
+		heard.length === 0
+			? 'sent'
+			: waiting.length === 0
+				? // One mark whether that was one person or the room: the hover
+					// says who, and every character here is taken from the text.
+					'✓'
+				: `✓ ${heard.length}/${to.length}`;
+	return (
+		<span
+			title={title}
+			aria-label={title}
+			className={`shrink-0 text-xs whitespace-nowrap tabular-nums ${
+				heard.length > 0 && waiting.length === 0 ? 'text-accent' : 'text-faint'
+			}`}
+		>
+			{label}
+		</span>
+	);
+};
+
 /// What has been said, and the box you say it in.
 ///
 /// The only thing on the screen allowed to grow. Everything above it — the talk
@@ -90,12 +131,13 @@ export const Messages = ({
 									{who}
 								</span>
 								<span
-									className={`min-w-0 wrap-break-word ${
+									className={`min-w-0 flex-1 wrap-break-word ${
 										m.mine ? 'text-muted' : 'text-ink'
 									}`}
 								>
 									{m.text}
 								</span>
+								{m.mine && <Receipt {...{ to: m.to, heard: m.heard }} />}
 							</div>
 						);
 					})

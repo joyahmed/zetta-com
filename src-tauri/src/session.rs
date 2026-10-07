@@ -99,13 +99,18 @@ impl Session {
             .map(|p| (p.addr.to_string(), p.name))
             .collect();
 
+        let name = |addr: &mut String| {
+            if let Some((_, n)) = names.iter().find(|(a, _)| a == addr) {
+                *addr = n.clone();
+            }
+        };
         let mut msgs = self.net.messages();
         for m in &mut msgs {
             if m.mine {
-                continue;
-            }
-            if let Some((_, name)) = names.iter().find(|(addr, _)| *addr == m.from) {
-                m.from = name.clone();
+                m.to.iter_mut().for_each(name);
+                m.heard.iter_mut().for_each(name);
+            } else {
+                name(&mut m.from);
             }
         }
         msgs

@@ -107,7 +107,25 @@ const at = (hh: number, mm: number) => new Date(2026, 0, 1, hh, mm).getTime();
 /// Kept short enough that no line wraps and the whole exchange fits the log
 /// without scrolling. A screenshot with a half-cut sentence at the bottom edge
 /// reads as a broken layout, whatever it actually says.
-export const DEMO_MESSAGES: Message[] = [
+const ROOM = ['Fatema', 'Riya', 'Salman', 'Emon', 'Ahad', 'Rashique', 'Himel'];
+const OUT = ROOM.filter(n => n !== 'Rashique');
+
+/// Your own lines carry each receipt state the log can show: everyone, one
+/// person, all but the machine that went offline, and one still arriving.
+const RECEIPTS: Record<number, { to: string[]; heard: string[] }> = {
+	1: { to: ROOM, heard: ROOM },
+	3: { to: ROOM, heard: ROOM },
+	5: { to: ['Rashique'], heard: ['Rashique'] },
+	7: { to: OUT, heard: OUT.slice(0, 5) },
+	12: { to: OUT, heard: OUT.slice(0, 3) }
+};
+
+const withReceipts = (m: Omit<Message, 'to' | 'heard'>): Message => ({
+	...m,
+	...(RECEIPTS[m.id] ?? { to: [], heard: [] })
+});
+
+export const DEMO_MESSAGES: Message[] = ([
 	{ id: 1, from: '', text: 'Freeze on main until the release is out', mine: true, at: at(9, 10) },
 	{ id: 2, from: 'Salman', text: 'CI green on my branch', mine: false, at: at(9, 12) },
 	{ id: 3, from: '', text: 'Hold, staging is on the old migration', mine: true, at: at(9, 13) },
@@ -121,7 +139,7 @@ export const DEMO_MESSAGES: Message[] = [
 	{ id: 11, from: 'Emon', text: 'Migration done, new schema is up', mine: false, at: at(9, 34) },
 	{ id: 12, from: '', text: 'Run the smoke tests before anyone merges', mine: true, at: at(9, 35) },
 	{ id: 13, from: 'Salman', text: 'Smoke passed, deploying', mine: false, at: at(9, 41) }
-];
+] as Omit<Message, 'to' | 'heard'>[]).map(withReceipts);
 
 export const DEMO_ROOM = {
 	passphrase: 'cedar-harbor-quartz-thistle-ivory-9f4c2ab7e1d05836',
