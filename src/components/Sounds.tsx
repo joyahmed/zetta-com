@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { preview, type SoundName } from '../utils/sounds';
 
 /// One row per sound: a switch, what it is for, and a way to hear it now.
@@ -32,6 +33,35 @@ const ROWS: { key: keyof Omit<Sounds, 'volume'>; label: string; hint: string; te
 	}
 ];
 
+/// A controlled slider held in local state. The old uncontrolled one was keyed
+/// on the saved volume, so the first arrow press saved, the key changed, React
+/// remounted the input and focus fell to BODY: the second press did nothing.
+const VolumeSlider = ({ volume, onSave }: { volume: number; onSave: (volume: number) => void }) => {
+	const [v, setV] = useState(Math.round(volume * 100));
+
+	/// Follow the saved value when it changes from elsewhere.
+	useEffect(() => setV(Math.round(volume * 100)), [volume]);
+
+	/// Skip the write when a release left the value where it was.
+	const save = () => {
+		if (v !== Math.round(volume * 100)) onSave(v / 100);
+	};
+
+	return (
+		<input
+			type='range'
+			min={0}
+			max={100}
+			step={5}
+			value={v}
+			onChange={e => setV(Number(e.currentTarget.value))}
+			onPointerUp={save}
+			onKeyUp={save}
+			className='min-w-0 flex-1 accent-accent'
+		/>
+	);
+};
+
 export const Sounds = ({ sounds, onChoose }: SoundsProps) => (
 	<div className='flex flex-col gap-3'>
 		{ROWS.map(r => (
@@ -65,17 +95,7 @@ export const Sounds = ({ sounds, onChoose }: SoundsProps) => (
 			</span>
 			{/* Saved on release, not on every step of the drag: each save is a
 			    write of the whole config file. */}
-			<input
-				type='range'
-				min={0}
-				max={100}
-				step={5}
-				defaultValue={Math.round(sounds.volume * 100)}
-				key={sounds.volume}
-				onPointerUp={e => onChoose({ volume: Number(e.currentTarget.value) / 100 })}
-				onKeyUp={e => onChoose({ volume: Number(e.currentTarget.value) / 100 })}
-				className='min-w-0 flex-1 accent-accent'
-			/>
+			<VolumeSlider volume={sounds.volume} onSave={volume => onChoose({ volume })} />
 		</label>
 	</div>
 );
