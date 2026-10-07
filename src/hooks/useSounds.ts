@@ -12,6 +12,42 @@ const DEFAULTS: Sounds = {
 	volume: 0.7
 };
 
+/// How long after a session starts that presence changes stay silent. A fresh
+/// session has heard nobody yet and heartbeats come every 2 s, so for two
+/// beats plus margin "not live" means "not heard yet", not "went away".
+export const SETTLE_MS = 4500;
+
+/// Decides the presence tone for one roster poll, or null for none.
+///
+/// `seen` is the set of watched addresses that have been live at least once
+/// since this session started. It is updated here (after the decision), so a
+/// PC's first sighting never plays "online" and a PC never heard at all can
+/// never play "offline". While not `settled` it only learns, never plays.
+/// One tone per poll, and offline wins over online. A PC missing from either
+/// roster counts as not live.
+export const presenceChange = (
+	prevLive: Map<string, boolean>,
+	nowLive: Map<string, boolean>,
+	seen: Set<string>,
+	settled: boolean,
+	watched: string[]
+): 'offline' | 'online' | null => {
+	const live = (m: Map<string, boolean>, a: string) => m.get(a) ?? false;
+	let gone = false;
+	let back = false;
+	for (const a of watched) {
+		const was = live(prevLive, a);
+		const is = live(nowLive, a);
+		if (was !== is && seen.has(a)) {
+			if (is) back = true;
+			else gone = true;
+		}
+	}
+	for (const a of watched) if (live(nowLive, a)) seen.add(a);
+	if (!settled) return null;
+	return gone ? 'offline' : back ? 'online' : null;
+};
+
 /// The sound settings, the per-PC watch list, and the listeners that play the
 /// sounds Rust announces.
 ///
@@ -42,7 +78,10 @@ export const useSounds = (
 	useEffect(() => {
 		const pending = [
 			listen('voice-start', () => sound('voice')),
-			listen<boolean>('talk-key', e => sound(e.payload ? 'keyDown' : 'keyUp'))
+			listen<boolean>('talk-key', e => sound(e.payload ? 'keyDown' : 'keyUp')),
+			// Rust restarted the session in place (passphrase, audio device or PC
+			// list changed): `running` never flips, so reset the presence baseline.
+			listen('session-restart', () => resetPresence())
 		];
 		return () => {
 			for (const p of pending) p.then(f => f()).catch(() => {});
@@ -52,24 +91,29 @@ export const useSounds = (
 	// Who was live at the last poll. Empty until the first poll after a start,
 	// so starting the transport does not announce everybody coming online, and
 	// cleared on stop, so stopping does not announce everybody leaving.
+	// `seen` and `startedAt` are the same idea for a fresh session: see
+	// presenceChange.
 	const was = useRef<Map<string, boolean> | null>(null);
+	const seen = useRef(new Set<string>());
+	const startedAt = useRef(0);
+	const resetPresence = () => {
+		was.current = null;
+		seen.current.clear();
+		startedAt.current = Date.now();
+	};
 	useEffect(() => {
-		if (!running) {
-			was.current = null;
-			return;
-		}
+		if (running) resetPresence();
+		else was.current = null;
+	}, [running]);
+	useEffect(() => {
+		if (!running) return;
 		const now = new Map(peers.map(p => [p.addr, p.live]));
 		const before = was.current;
 		was.current = now;
 		if (!before) return;
-		// One sound per poll, however many changed. Gone wins over back: of the
-		// two, it is the one somebody might have to act on.
-		// A PC missing from the roster counts as not live, so one that drops out
-		// of discovery entirely is "gone" and one that reappears is "back".
-		const live = (m: Map<string, boolean>, a: string) => m.get(a) ?? false;
-		const changed = watched.filter(a => live(before, a) !== live(now, a));
-		if (changed.some(a => !live(now, a))) sound('offline');
-		else if (changed.length > 0) sound('online');
+		const settled = Date.now() - startedAt.current >= SETTLE_MS;
+		const tone = presenceChange(before, now, seen.current, settled, watched);
+		if (tone) sound(tone);
 	}, [peers, running, watched]);
 
 	const choose = async (next: Partial<Sounds>) => {
