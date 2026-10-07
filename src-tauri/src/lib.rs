@@ -14,6 +14,7 @@ mod keys;
 #[cfg(target_os = "windows")]
 mod log;
 mod net;
+mod notify;
 mod room;
 mod session;
 mod state;
@@ -158,6 +159,8 @@ pub fn run() {
             commands::config_get,
             commands::ptt_held,
             commands::set_headphones,
+            commands::set_sounds,
+            commands::set_watched,
             commands::send_text,
             commands::messages,
             commands::manual_peers,
@@ -221,6 +224,7 @@ pub fn run() {
                 })
                 .build(app)?;
 
+            notify::init(app.handle().clone());
             let cfg = config::load(app.handle()).unwrap_or_default();
             audio::HEADPHONES.store(cfg.headphones, std::sync::atomic::Ordering::Relaxed);
             keys::register_all(&app.handle().clone(), &bindings, &listing, &cfg);

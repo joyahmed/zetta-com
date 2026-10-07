@@ -934,12 +934,18 @@ pub fn start(
             }
 
             if h.kind == KIND_AUDIO && len > HEADER_LEN {
-                {
+                let starting = {
                     let mut map = match rx_last_audio.lock() {
                         Ok(m) => m,
                         Err(e) => e.into_inner(),
                     };
-                    map.insert(from, Instant::now());
+                    map.insert(from, Instant::now())
+                        .is_none_or(|t| t.elapsed() >= TALKING_TIMEOUT)
+                };
+                // The same silence that ends "talking" in the roster starts a
+                // new sentence here, so the beep and the green dot agree.
+                if starting {
+                    crate::notify::voice_start(from);
                 }
 
                 let (jitter, expected) = windows

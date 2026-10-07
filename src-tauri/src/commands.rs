@@ -402,6 +402,29 @@ pub fn set_headphones(app: tauri::AppHandle, on: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// Save which sounds play and how loud. The window plays them, so there is
+/// nothing to apply here beyond writing it down.
+#[tauri::command]
+pub fn set_sounds(app: tauri::AppHandle, sounds: config::Sounds) -> Result<(), String> {
+    let mut cfg = config::load(&app).unwrap_or_default();
+    cfg.sounds = sounds;
+    cfg.sounds.volume = cfg.sounds.volume.clamp(0.0, 1.0);
+    config::save(&app, &cfg).map_err(|e| format!("{e:#}"))
+}
+
+/// Start or stop watching a PC for going offline. Returns the whole list, so
+/// the window never holds a copy that disagrees with the file.
+#[tauri::command]
+pub fn set_watched(app: tauri::AppHandle, addr: String, on: bool) -> Result<Vec<String>, String> {
+    let mut cfg = config::load(&app).unwrap_or_default();
+    cfg.watched.retain(|a| *a != addr);
+    if on {
+        cfg.watched.push(addr);
+    }
+    config::save(&app, &cfg).map_err(|e| format!("{e:#}"))?;
+    Ok(cfg.watched)
+}
+
 /// The name this machine advertises itself under, so the UI can show you which
 /// entry in everyone else's roster is you.
 #[tauri::command]

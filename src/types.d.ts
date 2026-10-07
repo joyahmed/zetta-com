@@ -29,6 +29,23 @@ type Config = {
 	startDelay: number;
 	/// Keep hearing others while talking. Only safe on headphones.
 	headphones: boolean;
+	sounds: Sounds;
+	/// Addresses whose going offline and coming back plays a tone.
+	watched: string[];
+};
+
+/// One switch per sound, one volume (0 to 1) for all of them.
+type Sounds = {
+	message: boolean;
+	voice: boolean;
+	key: boolean;
+	presence: boolean;
+	volume: number;
+};
+
+type SoundsProps = {
+	sounds: Sounds;
+	onChoose: (next: Partial<Sounds>) => Promise<void>;
 };
 
 type StartupProps = {
@@ -228,6 +245,9 @@ type PcsProps = {
 	/// The full roster in the order wanted, by address. This decides which PC
 	/// each Ctrl+n reaches.
 	onReorder: (order: string[]) => Promise<void>;
+	/// Addresses that play a tone when they go offline or come back.
+	watched: string[];
+	onWatch: (addr: string, on: boolean) => Promise<void>;
 };
 
 type ModalProps = {

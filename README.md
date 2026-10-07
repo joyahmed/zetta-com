@@ -74,6 +74,7 @@ Two things it does that most of the alternatives cannot:
 | **One person or everyone** | `Ctrl+1…9` talks to a specific PC, `Ctrl+0` to the room, `F7` back to whoever spoke last. |
 | **Messages** | Type, or fire a preset with a key. They arrive as native notifications when the window is hidden. |
 | **Finds everyone by itself** | mDNS discovery — no addresses to type on a normal network. |
+| **Sounds you can turn off** | A chime for a message you are not looking at, a blip when someone starts talking to you, and a tone when a PC you put a bell on goes offline or comes back. Each has its own switch, a Test button and one shared volume. |
 | **Reports absence** | A heartbeat every two seconds; somebody who goes quiet greys out within seven. It says who is *not* there, not just who is. |
 | **Names you choose** | `DEVS002` is not Rafi. Name a machine when you add it, or rename, correct or remove it later. |
 | **Says which build everyone is on** | Each machine puts its version on the wire, so the roster names anyone running something different from you. It is for keeping a rollout straight, not for finding faults — a machine too old to talk to you at all cannot tell you its version either. Nothing is asked of the internet; this only knows what the machines on your own network say. |

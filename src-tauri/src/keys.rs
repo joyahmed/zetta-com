@@ -297,6 +297,16 @@ fn aim(app: &tauri::AppHandle, addr: Option<std::net::SocketAddr>) {
     }
 }
 
+/// Open or close the microphone, and tell the window when that changed.
+///
+/// Only on a change: a held key repeats its press, and a click per repeat
+/// would be a rattle.
+fn hold(ptt: &AtomicBool, pressed: bool) {
+    if ptt.swap(pressed, Ordering::Relaxed) != pressed {
+        crate::notify::talk_key(pressed);
+    }
+}
+
 /// What a key press actually does.
 ///
 /// Separated from registration so the behaviour can be read in one place
@@ -316,7 +326,7 @@ pub fn dispatch(
             // key never reaches here, no amount of looking at the socket will
             // explain the silence.
             eprintln!("[keys] talk key {}", if pressed { "down" } else { "up" });
-            ptt.store(pressed, Ordering::Relaxed)
+            hold(ptt, pressed)
         }
 
         // On press only. Firing again on release would send everything twice.
@@ -344,7 +354,7 @@ pub fn dispatch(
                     None => return eprintln!("[keys] no PC at position {slot}"),
                 }
             }
-            ptt.store(pressed, Ordering::Relaxed);
+            hold(ptt, pressed);
         }
         Action::MessageTo(slot) => {
             if pressed {
@@ -377,14 +387,14 @@ pub fn dispatch(
                     None => return eprintln!("[keys] nobody to reply to yet"),
                 }
             }
-            ptt.store(pressed, Ordering::Relaxed);
+            hold(ptt, pressed);
         }
 
         Action::TalkAll => {
             if pressed {
                 aim(app, None);
             }
-            ptt.store(pressed, Ordering::Relaxed);
+            hold(ptt, pressed);
         }
         Action::MessageAll => {
             if pressed {

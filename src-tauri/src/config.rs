@@ -43,6 +43,8 @@ impl Default for Config {
             presets: default_presets(),
             start_delay: default_start_delay(),
             headphones: false,
+            sounds: Sounds::default(),
+            watched: Vec::new(),
         }
     }
 }
@@ -135,6 +137,49 @@ pub struct Config {
     /// desk rather than about the room. See `audio::HEADPHONES`.
     #[serde(default)]
     pub headphones: bool,
+
+    /// Which sounds play, and how loud. Kept here rather than in the webview's
+    /// storage so it survives a reinstall the way every other setting does.
+    #[serde(default)]
+    pub sounds: Sounds,
+
+    /// Machines, by address, whose going offline and coming back is worth a
+    /// tone. Chosen per PC: a tone for every machine in an office is a tone
+    /// every time anyone shuts down, and nobody listens to that for a week.
+    #[serde(default)]
+    pub watched: Vec<String>,
+}
+
+/// One switch per sound and one volume for all of them.
+///
+/// The defaults are the ones that stay quiet unless something needs you. The
+/// key click is off because on speakers your microphone is already open when it
+/// plays, so it goes out to the room.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Sounds {
+    /// A message arrived while the window was not being looked at.
+    pub message: bool,
+    /// Somebody started talking to you.
+    pub voice: bool,
+    /// Your own talk key, down and up.
+    pub key: bool,
+    /// A watched PC went offline or came back.
+    pub presence: bool,
+    /// 0.0 to 1.0.
+    pub volume: f32,
+}
+
+impl Default for Sounds {
+    fn default() -> Self {
+        Self {
+            message: true,
+            voice: true,
+            key: false,
+            presence: true,
+            volume: 0.7,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -269,4 +314,26 @@ pub fn save(app: &AppHandle, cfg: &Config) -> Result<()> {
     let json = serde_json::to_string_pretty(cfg)?;
     fs::write(&p, json).with_context(|| format!("writing {}", p.display()))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_config_from_before_sounds_existed_still_loads() {
+        let old = r#"{"port":9001,"peer":"","manual":[],"talkShortcut":"F8"}"#;
+        let cfg: Config = serde_json::from_str(old).unwrap();
+        assert!(!cfg.headphones);
+        assert!(cfg.watched.is_empty());
+        assert!(cfg.sounds.message && cfg.sounds.voice && !cfg.sounds.key);
+    }
+
+    #[test]
+    fn a_half_written_sounds_block_keeps_the_rest_at_default() {
+        let s: Sounds = serde_json::from_str(r#"{"voice":false}"#).unwrap();
+        assert!(!s.voice);
+        assert!(s.message && s.presence);
+        assert_eq!(s.volume, 0.7);
+    }
 }

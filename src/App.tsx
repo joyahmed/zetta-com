@@ -12,6 +12,7 @@ import { Presets } from './components/Presets';
 import { Room } from './components/Room';
 import { Roster } from './components/Roster';
 import { Shortcuts } from './components/Shortcuts';
+import { Sounds } from './components/Sounds';
 import { Startup } from './components/Startup';
 import { TalkBar } from './components/TalkBar';
 import { Targets } from './components/Targets';
@@ -20,6 +21,7 @@ import { useManualPeers } from './hooks/useManualPeers';
 import { useMessages } from './hooks/useMessages';
 import { usePtt } from './hooks/usePtt';
 import { useShortcuts } from './hooks/useShortcuts';
+import { useSounds } from './hooks/useSounds';
 import { useStartup } from './hooks/useStartup';
 import { useDevices } from './hooks/useDevices';
 import { useRoom } from './hooks/useRoom';
@@ -47,6 +49,7 @@ const App = () => {
 	const devices = useDevices(setError);
 	const room = useRoom(setError);
 	const startup = useStartup(setError);
+	const sounds = useSounds(peers, running, setError);
 	const {
 		shortcuts,
 		setShortcut,
@@ -231,6 +234,15 @@ const App = () => {
 
 					<div className='flex flex-col gap-2'>
 						<h3 className='text-xs font-medium tracking-wide text-muted uppercase'>
+							Sounds
+						</h3>
+						<Sounds
+							{...{ sounds: sounds.sounds, onChoose: sounds.choose }}
+						/>
+					</div>
+
+					<div className='flex flex-col gap-2'>
+						<h3 className='text-xs font-medium tracking-wide text-muted uppercase'>
 							PCs
 						</h3>
 						<Pcs
@@ -240,7 +252,9 @@ const App = () => {
 								onRename: rename,
 								onEdit: edit,
 								onRemove: remove,
-								onReorder: reorder
+								onReorder: reorder,
+								watched: sounds.watched,
+								onWatch: sounds.watch
 							}}
 						/>
 					</div>
