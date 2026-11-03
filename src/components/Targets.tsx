@@ -1,3 +1,4 @@
+import { useSidewaysWheel } from '../hooks/useSidewaysWheel';
 import { GROUP } from '../hooks/useTarget';
 import { Dot } from './Dot';
 import { Moon } from './Moon';
@@ -68,6 +69,7 @@ export const Targets = ({
 	onSeeAll
 }: TargetsProps) => {
 	const live = peers.filter(p => p.live).length;
+	const strip = useSidewaysWheel<HTMLDivElement>();
 
 	return (
 		<div className='flex flex-col gap-1.5'>
@@ -85,9 +87,15 @@ export const Targets = ({
 			    the border.
 			    No fade mask. There was one, and it dimmed the leading edge of
 			    the first chip — "Everyone" arrived half-faded before anything
-			    had been scrolled. A partly visible chip at the right is already
-			    understood as "there is more", and needs no help. */}
-			<div className='no-scrollbar flex gap-2 overflow-x-auto pb-0.5'>
+			    had been scrolled.
+			    The scrollbar used to be hidden too, on the idea that a cut-off
+			    chip says "there is more". It did not: with ten PCs and a mouse
+			    there was no way to reach the rest. Now the wheel scrolls it
+			    sideways and a thin bar shows where you are. */}
+			<div
+				ref={strip}
+				className='thin-scrollbar-x flex gap-2 overflow-x-auto pb-1.5'
+			>
 				{/* Everyone is first and always present: it is the default the
 				    app returns to, not one option among the machines. */}
 				<Chip

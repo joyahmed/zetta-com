@@ -1,3 +1,5 @@
+import { useSidewaysWheel } from '../hooks/useSidewaysWheel';
+
 /// Canned messages. Each one also has a global shortcut, so the usual way to
 /// send one is without opening the window at all — these buttons exist for
 /// when it is already open, and so the shortcuts are discoverable rather than
@@ -7,10 +9,14 @@
 /// presets became two rows and six became three, and every one of them was
 /// taken out of the message log directly below.
 export const Presets = ({ presets, onSend, disabled }: PresetsProps) => {
+	const strip = useSidewaysWheel<HTMLDivElement>();
 	if (presets.length === 0) return null;
 
 	return (
-		<div className='no-scrollbar flex gap-2 overflow-x-auto'>
+		<div
+			ref={strip}
+			className='thin-scrollbar-x flex gap-2 overflow-x-auto pb-1.5'
+		>
 			{presets.map(p => (
 				<button
 					key={p.label}

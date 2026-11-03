@@ -135,11 +135,25 @@
 	}
 }
 
-/* For strips that scroll sideways. A horizontal bar under a row of chips reads
-   as a broken layout rather than as an affordance, and the chips themselves
-   already show they continue past the edge. */
-@utility no-scrollbar {
+/* For strips that scroll sideways (Send to, presets). This used to hide the
+   bar entirely, on the idea that a cut-off chip already says "there is more".
+   With a mouse it did not help: the wheel moved nothing and the bar you could
+   drag was gone, so PCs past the edge were unreachable. Now it is a thin 4px
+   bar, always shown (a hover-only bar hides the very fact that the row
+   scrolls), and it only appears at all when the row overflows.
+   useSidewaysWheel makes the wheel move it. */
+@utility thin-scrollbar-x {
 	&::-webkit-scrollbar {
-		display: none;
+		height: 4px;
+	}
+
+	/* faint, not line: in dark the line colour sits 1 step off the surface
+	   and the bar disappeared - the one thing this bar is for. */
+	&::-webkit-scrollbar-thumb {
+		background: var(--color-faint);
+	}
+
+	&::-webkit-scrollbar-thumb:hover {
+		background: var(--color-muted);
 	}
 }
