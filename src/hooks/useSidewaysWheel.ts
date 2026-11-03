@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useState } from 'react';
 
 /// Lets an ordinary mouse wheel scroll a sideways strip.
 ///
@@ -11,11 +11,15 @@ import { useEffect, useRef } from 'react';
 /// at either end the event falls through and the page behind it still scrolls.
 /// The listener is added by hand because React's `onWheel` is passive and
 /// cannot call `preventDefault`.
+///
+/// Returns a callback ref, not a ref object: the strip can mount after the
+/// hook first runs (Presets renders nothing until config_get fills it), and an
+/// effect reading `ref.current` once on mount never saw that node. Holding the
+/// node in state re-runs the effect whenever it appears or changes.
 export const useSidewaysWheel = <T extends HTMLElement>() => {
-	const ref = useRef<T>(null);
+	const [el, setEl] = useState<T | null>(null);
 
 	useEffect(() => {
-		const el = ref.current;
 		if (!el) return;
 
 		const onWheel = (e: WheelEvent) => {
@@ -32,7 +36,7 @@ export const useSidewaysWheel = <T extends HTMLElement>() => {
 
 		el.addEventListener('wheel', onWheel, { passive: false });
 		return () => el.removeEventListener('wheel', onWheel);
-	}, []);
+	}, [el]);
 
-	return ref;
+	return setEl;
 };
