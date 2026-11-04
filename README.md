@@ -66,7 +66,7 @@ Two good things came with it. Machines now find each other on their own. And bec
 ### Messages
 
 - Type a message, or fire a saved preset with a key.
-- <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>1</kbd>…<kbd>9</kbd> messages that PC, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>0</kbd> messages everyone.
+- <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>9</kbd> messages that PC, <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>0</kbd> messages everyone.
 - They show as normal system notifications when the window is hidden.
 - Each message you send shows a ✓ when everyone got it, or `✓ 3/6` while some have not. Hover to see who.
 

@@ -236,7 +236,7 @@ export const Pcs = ({
 								    where you come to think about the machine. */}
 								{r.slot !== undefined && (
 									<span
-										title={`Ctrl+${r.slot} to talk, Ctrl+Shift+${r.slot} to message`}
+										title={`Ctrl+${r.slot} to talk, Ctrl+Alt+${r.slot} to message`}
 										className='font-mono text-[0.65rem] font-normal text-faint'
 									>
 										{r.slot}
