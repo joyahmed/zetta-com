@@ -1,362 +1,155 @@
 <div align="center">
 
-<img src="app-icon.png" alt="" width="104" height="104">
+<img src="app-icon.png" alt="Zetta Com icon" width="112">
 
-<h1>Zetta Com</h1>
+# Zetta Com
 
-<p><strong>A LAN intercom.</strong><br>
-Hold a key, and the people you choose hear you — one person or the whole room.</p>
+**An intercom for the computers on your local network.**<br>
+Hold a key, and the people you pick hear you.
 
-<p>
-  <a href="https://github.com/joyahmed/zetta-com/actions/workflows/release.yml"><img alt="Release build" src="https://github.com/joyahmed/zetta-com/actions/workflows/release.yml/badge.svg"></a>
-  <a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/badge/licence-MIT-8b5cf6"></a>
-  <img alt="Windows, macOS and Linux" src="https://img.shields.io/badge/Windows%20%7C%20macOS%20%7C%20Linux-334155">
-  <img alt="2.5 MB installer" src="https://img.shields.io/badge/installer-2.5%20MB-06b6d4">
-  <img alt="LAN only, no internet" src="https://img.shields.io/badge/network-LAN%20only-22c55e">
-</p>
+[![Latest release](https://img.shields.io/github/v/release/joyahmed/zetta-com?style=flat-square&label=release&color=14b8a6)](https://github.com/joyahmed/zetta-com/releases/latest) [![Platforms](https://img.shields.io/badge/Windows%20%C2%B7%20macOS%20%C2%B7%20Linux-1e293b?style=flat-square)](#install) [![License: MIT](https://img.shields.io/badge/license-MIT-1e293b?style=flat-square)](LICENSE)
 
-<p>
-  <a href="#why-this-and-not-something-else">Why this</a> ·
-  <a href="#install">Install</a> ·
-  <a href="#what-it-does">What it does</a> ·
-  <a href="#shortcuts">Shortcuts</a> ·
-  <a href="#using-it">Using it</a> ·
-  <a href="#security">Security</a> ·
-  <a href="#how-it-works">How it works</a>
-</p>
+### [⬇ Download Zetta Com](https://github.com/joyahmed/zetta-com/releases/latest)
+
+Free · No internet · No accounts · No server · Rust + Tauri 2 + React
 
 </div>
 
-No internet. No accounts. No server. No configuration. Start it on two machines
-on the same network and they find each other; hold `F8` and talk. Your voice
-goes straight from your machine to theirs and touches nothing else on the way.
+<br>
 
-<p align="center">
-  <img src="docs/screenshots/home.png" alt="The main window: a talk bar, a row of PCs to aim at, and the message log" width="330">
-  <img src="docs/screenshots/talking.png" alt="The same window with F8 held — the talk bar filled, reading Talking to everyone" width="330">
-</p>
+## Why I built this
 
-<p align="center"><em>Idle, and with <code>F8</code> held.</em></p>
+We needed to call each other across a room full of computers, and walking over every time was slow. My first try was a pile of batch files, PowerShell and ffmpeg. It worked, mostly. But almost every problem came from the scripts around it, not the intercom: old PowerShell quirks, line endings, an installer that hid its own errors.
 
----
+The one that ended it was the firewall. The program talking on the network was `powershell.exe`, and when Windows blocked it, a PC just went silent and nobody knew why. So I made a real app with its own name in the firewall.
 
-## Why this and not something else
+Two good things came with it. Machines now find each other on their own. And because each one sends a small "I'm here" signal, the app can tell you when somebody is **not** listening. The old one never could.
 
-Every other way of doing this asks for something Zetta Com does not.
+## A quick look
 
-| | |
-|---|---|
-| **Discord, Teams, Slack huddles** | Accounts, an internet connection, and a round trip through somebody else's datacentre to reach the desk next to you. They stop working the moment the line does. |
-| **Walkie-talkies** | Hardware to buy, charge, and lose. In some bands, licensing. And nothing on a screen telling you who is actually listening. |
-| **A phone call** | One person, and they have to answer. |
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/add-pc.png" alt="Adding a PC by address, with an optional name" width="320"><br>
+      <b>Add one by hand.</b> If a machine can't be found on its own, type its address and give it a name.
+    </td>
+    <td width="50%" valign="top">
+      <img src="docs/screenshots/diagnostics.png" alt="Diagnostics: packets sent, received, lost and rejected" width="320"><br>
+      <b>Is it working?</b> Diagnostics counts packets sent, received, lost and rejected. Moving numbers mean yes.
+    </td>
+  </tr>
+</table>
 
-Zetta Com is a 2.5 MB installer that needs a network cable and nothing else. It
-runs on an air-gapped network. It runs in a workshop, a warehouse, a studio, a
-site office — anywhere there is a LAN and people who need to reach each other
-faster than walking.
+## Highlights
 
-Two things it does that most of the alternatives cannot:
+- 🎙 **Push to talk**: hold <kbd>F8</kbd> and whoever is selected hears you. Nothing is sent unless the key is down.
+- 🎯 **One, a group, or everyone**: <kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>9</kbd> talks to one PC, <kbd>Ctrl</kbd>+<kbd>0</kbd> to the whole room, <kbd>F7</kbd> back to whoever spoke last.
+- 🔎 **Finds everyone**: machines on the same network show up by themselves. No addresses to type.
+- 👀 **Knows who's away**: a PC that goes quiet greys out within 7 seconds.
+- 💬 **Messages**: type one, or send a saved preset with a key. A ✓ shows once everyone got it.
+- ⌨️ **Works from any app**: the keys are global, so you talk without leaving what you are doing.
+- 🪶 **Small**: a 2.7 MB Windows installer. It lives in the tray and can start with your computer.
 
-- **It reports absence.** A heartbeat every two seconds means the roster greys
-  somebody out within seven of their machine going quiet. Knowing that nobody is
-  listening is worth more than knowing that somebody might be.
-- **It works while you are working.** The shortcuts are global. You do not
-  alt-tab, you do not click into a window, you do not find a tab. You hold a key
-  in whatever you were already doing and start talking.
+<details>
+<summary><b>Everything it does</b> (click to open)</summary>
 
----
+### Talk
 
-## What it does
+- Hold <kbd>F8</kbd> to talk to whoever is selected. Let go and it stops.
+- <kbd>Ctrl</kbd>+<kbd>1</kbd>…<kbd>9</kbd> (hold) talks to that PC. The numbers follow the order of your PC list.
+- <kbd>Ctrl</kbd>+<kbd>0</kbd> (hold) talks to everyone.
+- <kbd>F7</kbd> (hold) talks back to whoever spoke to you last.
+- Saved groups (like "Devs" or "Front desk") sit next to Everyone. Members who are offline are skipped, never swapped for the whole room.
+- Half duplex on purpose: your speakers go quiet while you talk, so there is no echo.
+- An **I'm on headphones** switch keeps your speakers on while you talk, so two people can talk over each other like a phone call.
 
-| | |
-|---|---|
-| **Push to talk** | Hold `F8` and whoever is selected hears you. Nothing is transmitted unless the key is held. |
-| **One person, a group, or everyone** | `Ctrl+1…9` talks to a specific PC, `Ctrl+0` to the room, `F7` back to whoever spoke last. Saved groups ("Devs", "Front desk") sit next to Everyone under Send to; members who are offline are left out, never swapped for the whole room. |
-| **Messages** | Type, or fire a preset with a key. They arrive as native notifications when the window is hidden. Each of yours shows a ✓ once everyone it went to has received it, or `✓ 3/6` while some have not — hover for names. A machine on a build before 1.5 never answers, so a missing ✓ is not a failure. |
-| **Finds everyone by itself** | mDNS discovery — no addresses to type on a normal network. |
-| **Sounds you can turn off** | A chime for a message you are not looking at, a blip when someone starts talking to you, and a tone when a PC you put a bell on goes offline or comes back. Each has its own switch, a Test button and one shared volume. |
-| **Reports absence** | A heartbeat every two seconds; somebody who goes quiet greys out within seven. It says who is *not* there, not just who is. |
-| **Names you choose** | `DEVS002` is not Rafi. Name a machine when you add it, or rename, correct or remove it later. |
-| **Says which build everyone is on** | Each machine puts its version on the wire, so the roster names anyone running something different from you. It is for keeping a rollout straight, not for finding faults — a machine too old to talk to you at all cannot tell you its version either. Nothing is asked of the internet; this only knows what the machines on your own network say. |
+### Messages
 
----
+- Type a message, or fire a saved preset with a key.
+- <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>1</kbd>…<kbd>9</kbd> messages that PC, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>0</kbd> messages everyone.
+- They show as normal system notifications when the window is hidden.
+- Each message you send shows a ✓ when everyone got it, or `✓ 3/6` while some have not. Hover to see who.
+
+### Who's there
+
+- Machines on the same network find each other by themselves (mDNS).
+- Each one sends a small "I'm here" signal every 2 seconds. Somebody who goes quiet greys out within 7.
+- Give each machine a real name. `DESK-04` means nothing; a person's name does.
+- The list tells you when someone runs a different version from you, which helps when you update every PC.
+
+### Sounds
+
+- A chime for a message you are not looking at.
+- A short blip when someone starts talking to you.
+- Put a bell on a PC to hear when it goes offline or comes back.
+- Each sound has its own switch and a Test button, with one shared volume.
+
+### Everyday
+
+- Lives in the tray, and can start with your computer (a switch in Settings). Closing the window only hides it, so you still hear people. **Quit** is in the tray menu.
+- <kbd>F9</kbd> starts or stops it. <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd> opens the window.
+- Every shortcut is listed in the app, including any that another program took first, so a dead key never looks like a broken app.
+- Diagnostics shows packets sent, received, lost and rejected.
+
+</details>
 
 ## Install
 
-Grab an installer from [**releases**](../../releases).
+Download from the [Releases page](https://github.com/joyahmed/zetta-com/releases/latest). Install it on every PC that should talk.
 
-### Windows
+| System | File | First launch |
+|---|---|---|
+| **Windows** | `Zetta.Com_<version>_x64-setup.exe` | It asks for administrator, because it adds a firewall rule for the app. Windows may warn you: click **More info**, then **Run anyway**. |
+| **Mac** (Apple silicon) | `Zetta.Com_<version>_aarch64.dmg` | Drag it to Applications. macOS says the app is "damaged" because it isn't signed yet. Run `xattr -cr "/Applications/Zetta Com.app"` once after each download. Then turn on **System Settings > Privacy & Security > Local Network** for it, or it will hear nobody. |
+| **Linux** | `Zetta.Com_<version>_amd64.deb` or `.rpm` | `sudo apt install ./Zetta.Com_<version>_amd64.deb`, or install the `.rpm` with your package manager. |
 
-Run `Zetta Com_x.y.z_x64-setup.exe`. It asks for administrator, because it adds
-a firewall rule for you — see [Firewall](#firewall) for what and why.
+There is no Intel Mac build and no AppImage. On those, build it yourself (below).
 
-### macOS
+**It needs your network open on one port.** Voice, messages and the "I'm here" signal all use **UDP 9001** (you can change it in Settings; every PC must use the same one). Finding each other uses **UDP 5353**. On Windows the installer adds the firewall rule for you. If you run a build without installing it and Windows asks, click **Allow**. If you cancel, Windows quietly blocks it. To fix that, as administrator:
 
-**Apple silicon only.** The Intel build was dropped because GitHub is retiring
-the Intel macOS runner and the job stopped being scheduled at all — it sat
-queued indefinitely and held every release open behind it. On an Intel Mac,
-build it yourself.
+```powershell
+netsh advfirewall firewall delete rule name="Zetta Com"
+netsh advfirewall firewall add rule name="Zetta Com" dir=in action=allow program="C:\Program Files\Zetta Com\zetta-com.exe" protocol=udp profile=any enable=yes
+```
 
-> [!IMPORTANT]
-> **macOS will say the app is "damaged". It is not.** The builds are unsigned,
-> and Gatekeeper refuses a quarantined bundle that carries no signature.
->
-> Move the app to `/Applications`, then clear the quarantine flag:
->
-> ```bash
-> xattr -cr "/Applications/Zetta Com.app"
-> ```
->
-> You need this again after **every** new download, until the builds are signed.
+## Watch it
 
-> [!WARNING]
-> **Then turn on local network access**, in
-> **System Settings → Privacy & Security → Local Network**.
->
-> macOS normally asks for this the first time an app wants it — but clearing
-> quarantine can mean the prompt never appears. Without the permission the app
-> looks like it is running perfectly while hearing nobody at all, and nothing
-> anywhere reports an error.
+See it running, and more of what I build: [youtube.com/@joysbuilds](https://www.youtube.com/@joysbuilds).
 
-### Linux
+## Privacy
 
-`.deb` or `.rpm`. Needs `libasound2-dev` at build time only.
+- No account, no sign-in, no analytics. It never calls anything outside your own network.
+- Your voice goes straight from your PC to theirs. There is no server in between.
+- Your settings are one file on your machine. Delete it and the app starts fresh.
 
-There is no AppImage. It has to carry its own copy of WebKitGTK and GStreamer to
-run on a machine that has neither, which made it 79 MB against the 4 MB of a
-`.deb` that simply depends on what the distribution already ships. On anything
-else, build it yourself — it is two commands.
+**Please read this:** on a normal network, anyone else on the same network can hear and send to Zetta Com. They don't even need the app. Use it on a network you trust, like your office or home LAN. Don't use it for anything you would not say out loud in that room.
 
-### Build it yourself
+## Build from source
 
-```bash
+You need [Rust](https://rustup.rs), [Bun](https://bun.sh) and Tauri 2's system libraries for your OS. On Windows you also need [CMake](https://cmake.org/download/) (for the Opus audio library). On Linux, `libasound2-dev`.
+
+```
 bun install
 bun run tauri build
 ```
 
-Artifacts land in `src-tauri/target/release/bundle/` — NSIS on Windows, `.deb`
-and `.rpm` on Linux, `.dmg` on macOS. Each platform builds only its own; the
-[release workflow](.github/workflows/release.yml) does all of them.
+The installers land in `src-tauri/target/release/bundle/`. Each OS builds only its own.
 
-> [!NOTE]
-> Building on **Windows** also needs [CMake](https://cmake.org/download/), which
-> libopus is compiled with. On **Linux**, `libasound2-dev` for ALSA.
+Before a pull request, both of these must be clean: `cd src-tauri && cargo check` and `bunx tsc --noEmit`. [CONTRIBUTING.md](CONTRIBUTING.md) has the rest, and [docs/PLAN.md](docs/PLAN.md) has the decisions and what I turned down.
 
----
+It's Rust and Tauri 2 on the back (Opus for audio), React and Tailwind on the front.
 
-## Shortcuts
-
-| Key | |
-|---|---|
-| `F8` (hold) | talk to whoever is selected |
-| `F7` (hold) | talk back to whoever spoke last |
-| `Ctrl+1…9` (hold) | talk to that PC |
-| `Ctrl+0` (hold) | talk to everyone |
-| `Ctrl+Shift+1…9` | message that PC |
-| `Ctrl+Shift+0` | message everyone |
-| `F9` | start or stop |
-| `Ctrl+Alt+T` | open the window |
-| `F1` | show all shortcuts |
-
-<p align="center">
-  <img src="docs/screenshots/shortcuts.png" alt="The shortcut list, with the nine talk and nine message keys collapsed into one row each" width="330">
-</p>
-
-The numbers follow the order PCs appear in the list, so `1…9` are the first
-nine. There is no limit on how many PCs you can add — there is a limit on how
-many number keys exist. For the rest, select one and hold `F8`.
-
-> [!CAUTION]
-> These are **global**. While the app is running it owns `Ctrl+0…9` for every
-> program on the machine — browser and editor tabs included. That is the price
-> of talking to somebody without leaving what you are doing, and it is why the
-> app's own actions sit on function keys instead of taking more of that space.
-
-Every key is listed in the app, **including the ones that failed to register**.
-A global shortcut can lose a race to another application, and when it does the
-key silently does nothing — which is otherwise indistinguishable from the app
-being broken.
-
----
-
-## Using it
-
-It starts with the machine and lives in the tray. Closing the window hides it,
-because an intercom that stops receiving when you tidy your desktop is not an
-intercom. **Quit** is in the tray menu.
-
-One socket carries everything: audio, text and heartbeats all travel over
-**UDP 9001**, separated by a byte in the header. Discovery is separate, on
-**UDP 5353** (mDNS). The port is a setting; everyone on the network must use the
-same one.
-
-<p align="center">
-  <img src="docs/screenshots/pcs.png" alt="Settings: the port, and every PC with its name, address and shortcut number" width="270">
-  <img src="docs/screenshots/add-pc.png" alt="Adding a PC by address, with an optional name" width="270">
-  <img src="docs/screenshots/diagnostics.png" alt="Diagnostics: packets sent, received, lost and rejected" width="270">
-</p>
-
-Settings holds the port and every PC. A machine discovery cannot reach is added
-by address, and named at the same time. Diagnostics is behind the status line in
-the header — the counters moving or not moving is the whole answer to "is this
-working".
-
-### Firewall
-
-The Windows installer adds an inbound rule for the executable across **all**
-profiles — Domain, Private and Public — so there is no first-start prompt. The
-rule is scoped to the *program*, not to port 9001, which means changing the port
-in Settings needs no firewall change, and mDNS on 5353 is covered by the same
-rule. Uninstalling removes it.
-
-> [!WARNING]
-> If you run a build straight out of `target/release/bundle` rather than
-> installing it, you get Windows' prompt instead. **Allow it.** If you cancel,
-> Windows writes a *block* rule that outranks everything afterwards and leaves
-> no visible trace.
->
-> This is also why there is no MSI. The firewall rule is added by an NSIS
-> installer hook, and the MSI has no equivalent here — so it produced an install
-> that looked identical to the working one and then walked the user into exactly
-> the failure this application was written to remove.
-
-To repair a cancelled prompt, or add the rule by hand — **as administrator**:
-
-```powershell
-netsh advfirewall firewall delete rule name="Zetta Com"
-netsh advfirewall firewall add rule name="Zetta Com" dir=in action=allow `
-  program="C:\Program Files\Zetta Com\zetta-com.exe" protocol=udp profile=any enable=yes
-```
-
-That administrator requirement is also why the installer is per-machine: adding
-a firewall rule is not something a per-user install is allowed to do, and one
-that tried would fail silently and leave you with the prompt it was meant to
-replace.
-
----
-
-## Where your data lives
-
-One file, on your machine:
-
-```
-Windows   %APPDATA%\com.joy.zetta-com\transport.json
-macOS     ~/Library/Application Support/com.joy.zetta-com/transport.json
-Linux     ~/.config/com.joy.zetta-com/transport.json
-```
-
-It holds the port, the PCs you added and the names you gave them, the order they
-sit in, your rebound keys, your presets and the room passphrase. There is no
-account, no sync, no analytics, and no call to anything outside your own
-network. Delete that file and the app is back to a first start.
-
-On Windows, `zetta-com.log` sits beside it. It is the app's own account of which
-microphone and speakers it chose, what it bound to, and who it heard from — the
-first place to look when somebody cannot be heard. It stays on the machine like
-everything else, and it is dropped and started again once it passes a megabyte.
-
-It is kept on the Rust side rather than in the webview because a machine whose
-only job is to listen has to come up receiving before any window has loaded.
-That is also why the passphrase is in plain text there — see
-[Security](#security).
-
----
-
-## Why it exists
-
-There was an earlier version built from batch files, PowerShell and ffmpeg. It
-worked. Nearly every failure in it came from the substrate rather than the
-intercom: PowerShell 5.1-only APIs, BOM parsing, CRLF, a script base64-embedded
-inside a `.bat`, an installer that swallowed exit codes.
-
-The one that settled it was the firewall. Inbound block rules killed a PC
-because the network-facing program was `powershell.exe` — a shared system binary
-anything can get muzzled, silently. A dedicated signed executable has its own
-firewall identity, its own prompt, its own rule. That is the whole reason this
-is an application.
-
-Two things came free: mDNS replaced Windows name resolution, which had broken
-two machines outright; and a heartbeat made it possible to report that somebody
-is **not** there, which the old version never could.
-
-`docs/PLAN.md` carries the decisions and the reasoning, including what was
-rejected and why.
-
-`docs/IMPROVEMENTS.md` is what gets built next, in order, as checkboxes.
-`docs/IMPROVEMENTS.md` is what gets built next, in order, as checkboxes.
-
----
-
-## How it works
-
-```
-audio    capture, encode, decode, playback. Knows nothing about sockets.
-net      socket, header, peers. Knows nothing about codecs.
-session  owns both and wires them together.
-```
-
-Opus at 20 ms frames, one frame per UDP datagram, unicast to each recipient —
-not broadcast, because some WiFi access points rate-limit or drop broadcast
-frames and one person silently hears nothing. Each remote talker gets its own
-decoder and its own reorder window; a missing frame is concealed rather than
-skipped.
-
-Half duplex, deliberately. Local playback is muted while you transmit, so the
-echo path never exists and there is nothing to cancel. Full duplex would have
-meant acoustic echo cancellation, and that becomes the project rather than a
-step in it.
-
-The exception is a switch in Settings, **I'm on headphones**: it keeps playback
-on while you talk, so two people who both have it on can talk over each other
-like a phone call. On speakers it feeds everyone's voice back into your
-microphone, which is why it is off by default.
-
----
-
-## Security
-
-**Set a passphrase.** One machine generates it, everyone else is given it, and
-from then on those machines are a room. Every packet is sealed with
-ChaCha20-Poly1305, which does two jobs at once:
-
-- **Admission** — a packet that does not authenticate is dropped, so nobody
-  outside the room can put audio into your speakers or appear in your roster.
-- **Privacy** — the payload is unreadable. Names and presence stop leaking too,
-  because heartbeats are sealed the same way.
-
-Every machine shows a short **room code** derived from the key. Compare it
-across two screens: same code, same room. Without it, a passphrase typed wrongly
-on one machine is indistinguishable from a network fault — everything appears to
-run, the roster is empty, and nothing reports an error, because a packet that
-fails to authenticate is dropped without a reply.
-
-> [!CAUTION]
-> **With no passphrase set, there is no security at all.** Anyone on the network
-> can send audio and text to anyone running this, and can capture the packets
-> and reconstruct a conversation. They do not need this app to do it, and
-> nothing in your roster will ever show they were there.
->
-> That is a reasonable trade on a LAN you control. It is not one anywhere else.
-
-What a passphrase does **not** do: anyone who has it hears everything — it is a
-channel key, not a per-person one — and anyone with access to a machine can read
-it out of the config file.
-
----
-
-## Licence
+## License
 
 MIT. See [LICENSE](LICENSE).
 
 ---
 
-## Who builds this
+<div align="center">
 
-Built by [Joy Ahmed](https://github.com/joyahmed) at
-**[ZettaByte](https://zettabyteincorp.com)** — we build the systems businesses
-run on, and the tools we need in order to build them. This is one of the latter,
-published because the reasoning in it is worth reading even if the app is not
-for you.
+I build tools I use myself, from Bangladesh. If Zetta Com saves you a walk across the room, that makes me happy.<br>
+Found a bug or want something? [Open an issue](https://github.com/joyahmed/zetta-com/issues).
 
-The rest of what we publish is at
-[zettabyteincorp.com/open-source](https://zettabyteincorp.com/open-source).
+**Joy**
+
+</div>
