@@ -137,7 +137,7 @@ export const Targets = ({
 							onClick: () => onTarget(p.addr),
 							slot: i < 9 ? i + 1 : undefined,
 							busy: p.live && p.busy,
-							// The position is what Ctrl+Alt+n aims at, so it
+							// The position is what Ctrl+n aims at, so it
 							// belongs where you can check it without opening
 							// the shortcut list.
 							title: `${p.addr}${i < 9 ? ` · Ctrl+${i + 1}` : ''}${p.live && p.busy ? ' · busy (do not disturb)' : ''}`

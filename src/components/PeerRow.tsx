@@ -12,8 +12,8 @@ export const PeerRow = ({ peer, selected, onSelect, slot }: PeerRowProps) => (
 		}`}
 	>
 		<Dot {...{ on: peer.live }} />
-		{/* The position is the shortcut: Ctrl+Alt+N holds to talk to this
-		    machine, Ctrl+Shift+N aims at it and opens the window. Shown so
+		{/* The position is the shortcut: Ctrl+N holds to talk to this
+		    machine, Ctrl+Alt+N aims at it and opens the window. Shown so
 		    nobody has to learn which row is which. */}
 		{slot !== undefined && slot <= 9 && (
 			<span className='w-4 shrink-0 text-center font-mono text-xs text-faint'>

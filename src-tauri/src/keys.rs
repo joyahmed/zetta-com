@@ -81,7 +81,7 @@ pub const EDITABLE: [(&str, &str, &str); 7] = [
     (
         "message-all",
         "Message everyone",
-        "CommandOrControl+Shift+Digit0",
+        "CommandOrControl+Alt+Digit0",
     ),
     ("start-stop", "Start or stop", "F9"),
     // Ctrl+Alt+T rather than F10. F10 registers, but Windows treats it as the
@@ -455,10 +455,12 @@ pub fn register_all(
     // The rebindable ones, in EDITABLE's order, each taking the saved choice or
     // falling back to its default.
     //
-    // Talking is Ctrl+number by default and messaging Ctrl+Shift+number: one
+    // Talking is Ctrl+number by default and messaging Ctrl+Alt+number: one
     // modifier for the thing done constantly, the same number either way. Those
     // are *global*, so the app holds Ctrl+0…9 for every other application on
-    // the machine while it runs. The app's own actions are single function keys
+    // the machine while it runs. Messaging was Ctrl+Shift+number until it was
+    // found to take File Explorer's view keys (Ctrl+Shift+1…8 change the icon
+    // size) away from Windows; Ctrl+Alt+number is free there and in common apps. The app's own actions are single function keys
     // instead — they are pressed occasionally, which is when a chord is hardest,
     // and F1 for the key list because every other program has taught that.
     for (id, label, _) in EDITABLE {
@@ -512,7 +514,7 @@ pub fn register_all(
             bindings,
             listing,
             &format!("Message PC {slot}"),
-            &format!("CommandOrControl+Shift+Digit{slot}"),
+            &format!("CommandOrControl+Alt+Digit{slot}"),
             Action::MessageTo(slot),
             None,
         );
