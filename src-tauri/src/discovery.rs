@@ -229,7 +229,7 @@ pub fn start(port: u16) -> Result<Discovery> {
                         // Port 0 is not an address anything can be sent to.
                         // mdns-sd will hand over a record whose SRV half has
                         // not arrived yet, and accepting one listed the Mac in
-                        // the Windows roster as 192.168.0.188:0 — a peer that
+                        // the Windows roster as 192.0.2.88:0 — a peer that
                         // looks present and is unreachable, which is worse than
                         // not listing it at all. Skipping is safe rather than
                         // final: the daemon re-resolves and sends another

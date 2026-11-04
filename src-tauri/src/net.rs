@@ -48,7 +48,7 @@ pub const KIND_HEARTBEAT: u8 = 2;
 /// A kind of its own rather than extra bytes on the heartbeat, and that is the
 /// whole design. Machines already running 1.2.0 read the entire heartbeat
 /// payload as the sender's name, so appending anything to it would put
-/// `JOYR9<NUL>1.3.0` in their roster — and bumping `VER` to change the format
+/// `DESK-01<NUL>1.3.0` in their roster — and bumping `VER` to change the format
 /// properly is worse still: an older build rejects every packet from a newer
 /// one, which is exactly how the Mac on 1.0.0 went silent with nothing anywhere
 /// saying why. An unknown *kind* costs an old build nothing. It parses the

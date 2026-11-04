@@ -9,7 +9,7 @@ import { loadSaved, saveSaved } from '../utils/storage';
 /// has to bind to it before any window exists. This hook is a view of it.
 export const useManualPeers = (onError: (message: string) => void) => {
 	const [manual, setManual] = useState<string[]>(
-		DEMO ? ['192.168.0.174:9001'] : []
+		DEMO ? ['192.0.2.174:9001'] : []
 	);
 	const [presets, setPresets] = useState<Preset[]>(DEMO ? DEMO_PRESETS : []);
 
